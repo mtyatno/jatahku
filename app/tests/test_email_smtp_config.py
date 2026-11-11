@@ -51,8 +51,8 @@ class SmtpSettingsTests(unittest.TestCase):
 
     def test_setiap_email_memakai_batas_waktu_smtp(self):
         # Ruling R-T3-1: server SMTP yang macet (sapaan, STARTTLS, DATA) tidak boleh menahan pemanggil selamanya;
-        # antrean email laporan berjalan di dalam `laporan_job` (max_instances=1), jadi kiriman yang tak pernah kembali
-        # menghentikan penerbitan laporan berikutnya. Semua email lewat `_deliver`.
+        # antrean email laporan berjalan di proses worker (`worker_email`), jadi server SMTP yang macet menahan setiap
+        # email sesudahnya. Semua email lewat `_deliver`.
         self.assertEqual(getattr(email_service, "SMTP_TIMEOUT", None), 30)
         for nama, kirim in (
             ("send_email", lambda: email_service.send_email("a@b.test", "Halo", "<p>x</p>")),

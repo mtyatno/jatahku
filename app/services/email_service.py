@@ -12,8 +12,8 @@ from app.core.config import get_settings
 logger = logging.getLogger("jatahku.email")
 
 # Batas waktu (detik) setiap operasi soket SMTP: sambung, sapaan, STARTTLS, DATA. Server yang macet tidak boleh menahan
-# pemanggil selamanya; antrean email laporan berjalan di dalam `laporan_job` (max_instances=1), jadi kiriman yang tak
-# pernah kembali menghentikan penerbitan laporan berikutnya. Batas yang terlampaui menjadi galat kiriman biasa.
+# pemanggil selamanya; antrean email laporan berjalan di proses worker (`worker_email`), jadi server SMTP yang macet
+# menahan setiap email sesudahnya. Batas yang terlampaui menjadi galat kiriman biasa.
 SMTP_TIMEOUT = 30
 
 

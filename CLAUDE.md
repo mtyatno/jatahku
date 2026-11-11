@@ -36,7 +36,7 @@
 - Redis key prefix: `link:webapp:{code}`, `txn:{key}`, `sub:{key}`
 - Scheduler: hourly per-user timezone-aware dispatch
 - Siklus anggaran milik household: households.payday_day (owner menentukan), users.payday_day = cermin untuk ruang keluarga; penulis tunggal services/household_cycle.py
-- Laporan berkala: laporan beku per user di tabel reports (job tiap jam :30), PDF fpdf2 AES-256 dibuat saat diminta dengan kata sandi laporan terenkripsi (REPORT_SECRET_KEY di .env); tidak ada file laporan di disk
+- Laporan berkala: laporan beku per user di tabel reports (job tiap jam :30), PDF fpdf2 AES-256 dibuat saat diminta dengan kata sandi laporan terenkripsi (REPORT_SECRET_KEY di .env); tidak ada file laporan di disk; email laporan dikirim worker `jatahku-worker` dari antrean di `reports` pada laju tetap (`EMAIL_LAPORAN_PER_DETIK`, bawaan 3/detik), dipantau lewat kartu Admin dan alarm Telegram ke admin (`docs/laporan-berkala.md`)
 - DMARC: `none` (not quarantine) for inbox delivery
 - SMTP: localhost:587 with auth (noreply@jatahku.com); kredensial hanya di `/opt/jatahku/.env` (`SMTP_*`, lihat `app/core/config.py`), tidak pernah di kode — repo ini publik
 
@@ -54,6 +54,7 @@
 - Frontend builds to `/home/jatahku/web/jatahku.com/public_html/`
 - Nginx: landing.html at /, app.html for React SPA routes
 - Backend: systemd `jatahku.service` → uvicorn port 8000
+- Worker email laporan: systemd `jatahku-worker` (`python -m app.services.laporan.worker_email`), unit di `deploy/jatahku-worker.service`, dipasang dan di-restart oleh `deploy.sh` (gagal aktif = "Deploy GAGAL")
 - Verifikasi: `api.jatahku.com/health` → `commit` yang berjalan; `jatahku.com/version.json` → commit build web (dicek otomatis oleh deploy.sh & workflow)
 
 ## Current Stats

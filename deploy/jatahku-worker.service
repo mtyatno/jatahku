@@ -1,0 +1,21 @@
+# Worker pengirim email laporan berkala Jatahku: menjalankan
+# `python -m app.services.laporan.worker_email` (antrean email laporan).
+# Dipasang dan di-restart oleh deploy.sh ke /etc/systemd/system/.
+# Pengaturan dibaca aplikasi sendiri dari /opt/jatahku/.env (app/core/config.py),
+# jadi unit ini tidak memakai EnvironmentFile.
+[Unit]
+Description=Jatahku worker email laporan
+After=network.target postgresql.service redis-server.service
+
+[Service]
+User=jatahku
+WorkingDirectory=/opt/jatahku/app
+ExecStart=/opt/jatahku/venv/bin/python -m app.services.laporan.worker_email
+Restart=always
+RestartSec=5
+Nice=5
+TimeoutStopSec=60
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

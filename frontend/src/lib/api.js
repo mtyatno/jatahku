@@ -830,6 +830,17 @@ class ApiClient {
     }
   }
 
+  // Admin kartu "Email laporan" (app/api/routes/admin.py; logika tampilan di lib/emailLaporanView.js) → { ok, status, data }.
+  async adminEmailLaporan() {
+    try {
+      const res = await this.request('/admin/email-laporan');
+      const data = await res.json().catch(() => null);
+      return { ok: res.ok, status: res.status, data };
+    } catch {
+      return { ok: false, status: 0, data: null };
+    }
+  }
+
   // Admin "Aturan belajar" Kotak Struk (app/api/routes/admin_kotak.py; logika tampilan di lib/proofRules.js).
   // Daftar aturan per status (menunggu|disetujui|ditolak|dicabut|semua) → {counts, rules} atau null bila gagal.
   async adminProofRules(status = 'semua') {

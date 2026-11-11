@@ -114,6 +114,10 @@ async def lifespan(app: FastAPI):
     # galat (CI sudah menolaknya lebih dulu, lihat app/plugins/host/validator.py), tidak menjatuhkan API.
     from app.plugins.host.registry import muat_saat_start
     muat_saat_start()
+    # Waktu API menyala: alarm `worker_mati` ditahan selama masa tenang sesudahnya (worker ikut menyala saat deploy).
+    from datetime import datetime, timezone
+    from app.services.laporan import pantau_email
+    pantau_email.API_MENYALA = datetime.now(timezone.utc)
     start_scheduler()
     # Kotak Struk (spec 2026-10-26): worker pembaca bukti berjalan sebagai tugas asyncio di
     # proses API, di samping scheduler. Gagal menyalakannya tidak boleh menjatuhkan API.

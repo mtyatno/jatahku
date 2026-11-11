@@ -3,16 +3,20 @@ tahap 2 butir 2, 3, 5, 6, dan 7; ruling review Task 3 R-T3-1 dan R-T3-2).
 
 `reports.email_status`: `menunggu` → `mengirim` → `terkirim`, atau `gagal` (alasan `smtp`) dan `dilewati` (alasan
 `belum_verifikasi`, `dimatikan`, `tanpa_email`). Saat terbit `terbitkan_household` (job.py) mengisinya dari
-`status_awal`. Laporan tahap 1 (`email_status` NULL) tidak pernah dikirim. `laporan_job` menjalankan
-`proses_antrean_email` tiap jam sesudah sapu notifikasi, di luar kunci household:
+`status_awal`. Laporan tahap 1 (`email_status` NULL) tidak pernah dikirim. Antrean dijalankan proses
+`worker_email` (bukan `laporan_job`); `proses_antrean_email` hanya untuk jalan manual. Satu putaran
+(`putaran_antrean`) dipacu dan dihentikan pemanggilnya (worker): `sebelum_laporan` di-await sebelum setiap laporan
+(jeda pacu), `berhenti()` dicek sebelum dan sesudahnya, tepat sebelum klaim, dan `sesudah_laporan(hasil)` dipanggil
+sesudah setiap laporan yang diproses:
 
 1. Klaim `mengirim` yang lebih tua dari `BATAS_MENGIRIM` (proses berhenti di tengah kiriman, atau kiriman berhasil yang
    hasilnya tidak bisa disimpan) kembali `menunggu`, atau menjadi `gagal`/`smtp` dengan `logger.error` bila
    percobaannya sudah `MAKS_PERCOBAAN`. Percobaannya sudah dihitung saat klaim. Email itu bisa terkirim dua kali dalam
    kasus yang sangat jarang: dipilih daripada email hilang.
-2. Paling banyak `MAKS_EMAIL_PER_JALAN` laporan `menunggu` yang belum pernah diklaim atau diklaim terakhir paling
-   sedikit `JEDA_COBA_ULANG` lalu, terbit terlama dulu. Jeda 55 menit untuk "paling cepat 1 jam": job jalan tiap jam di
-   menit 30, dan 60 menit tepat bisa meleset beberapa detik lalu menunda satu jam lagi.
+2. Paling banyak `KELOMPOK` laporan `menunggu` yang belum pernah diklaim atau diklaim terakhir paling
+   sedikit `JEDA_COBA_ULANG` lalu, terbit terlama dulu. Jeda 55 menit untuk "paling cepat 1 jam" (ditetapkan saat
+   antrean masih dijalankan job tiap jam di menit 30, ketika 60 menit tepat bisa meleset beberapa detik lalu menunda
+   satu jam lagi; worker memakai jeda yang sama).
 3. Per laporan, klaim lebih dulu (pola klaim notifikasi R16): UPDATE bersyarat `menunggu` dan jedanya sudah lewat →
    `mengirim`, `email_terakhir_at` = waktu klaim sebenarnya, `email_percobaan` + 1; commit; harus mengenai tepat satu
    baris, jadi job terjadwal dan jalan manual dari shell tidak pernah mengirim laporan yang sama bersamaan. SETIAP
@@ -41,7 +45,7 @@ laporan. Galat PDF dicatat dengan nama jenisnya saja, karena pesannya bisa memua
 """
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -68,7 +72,9 @@ ALASAN_SMTP = "smtp"
 MAKS_PERCOBAAN = 3
 JEDA_COBA_ULANG = timedelta(minutes=55)
 BATAS_MENGIRIM = timedelta(minutes=30)
-MAKS_EMAIL_PER_JALAN = 50
+KELOMPOK = 100
+# Akun terhapus/diblokir (email diganti berawalan ini); tidak pernah dikirimi laporan. Dipakai job.py dan pantau_email.py.
+AWALAN_AKUN_NONAKTIF = ("deleted_", "banned_")
 
 _LOG_KUNCI_TIDAK_ADA = "REPORT_SECRET_KEY kosong atau tidak valid: email laporan user %s dikirim tanpa lampiran PDF"
 _LOG_TOKEN_TAK_TERBACA = (
@@ -141,12 +147,37 @@ def _milik_klaim(report_id, waktu_klaim: datetime) -> tuple:
 
 
 async def proses_antrean_email(sekarang: datetime | None = None) -> dict:
-    """Satu putaran antrean email (langkah dan alasannya: docstring modul). Tanpa `sekarang`, setiap cap waktu (awal
-    jalan, klaim, terkirim) memakai waktu saat itu; `sekarang` (tes, atau jalan manual untuk waktu tertentu) membekukan
-    jam seluruh jalan. Mengembalikan jumlah laporan jalan ini `{"terkirim", "gagal", "dilewati", "dicoba_lagi"}`
-    (`gagal` termasuk klaim basi yang percobaannya habis); laporan yang galat tanpa hasil tercatat tidak dihitung (sudah
-    dicatat di log). Galat di luar satu laporan (langkah 1 dan 2) diteruskan ke pemanggil."""
-    jam = _jam if sekarang is None else (lambda: sekarang)
+    """Satu putaran antrean email tanpa pacu dan tanpa henti (jalan manual dari shell; worker memakai
+    `putaran_antrean`).
+    Tanpa `sekarang`, setiap cap waktu (awal jalan, klaim, terkirim) memakai waktu saat itu; `sekarang` (tes, atau jalan
+    manual untuk waktu tertentu) membekukan jam seluruh jalan. Mengembalikan hasil `putaran_antrean`."""
+    jam = None if sekarang is None else (lambda: sekarang)
+    hasil, _ = await putaran_antrean(jam)
+    return hasil
+
+
+async def putaran_antrean(
+    jam: Callable[[], datetime] | None = None,
+    *,
+    sebelum_laporan: Callable[[], Awaitable[None]] | None = None,
+    berhenti: Callable[[], bool] | None = None,
+    sesudah_laporan: Callable[[str | None], None] | None = None,
+) -> tuple[dict, bool]:
+    """Satu putaran antrean email (langkah dan alasannya: docstring modul): rapikan klaim basi, ambil paling banyak
+    `KELOMPOK` laporan siap, proses satu per satu. `jam` memberi setiap cap waktu (awal putaran, klaim, terkirim);
+    None = waktu sebenarnya modul ini. `sebelum_laporan` (pacu dari pemanggil) di-await sebelum setiap laporan.
+    `berhenti()` dicek sebelum dan sesudah `sebelum_laporan`, tepat sebelum klaim: bila true putaran berakhir dan
+    tidak ada laporan lagi yang diklaim (laporan yang sedang berjalan selalu diselesaikan). `sesudah_laporan(hasil)`
+    dipanggil sekali sesudah setiap laporan yang diproses dengan hasilnya (`"terkirim"`, `"gagal"`, `"dilewati"`,
+    `"dicoba_lagi"`), atau None bila pemrosesannya melempar (sudah dicatat); laporan yang tidak diproses (klaim kalah,
+    klaim bukan miliknya lagi, laporan atau user terhapus) tidak dilaporkan. Galat dari `sebelum_laporan`, `berhenti`,
+    dan `sesudah_laporan` diteruskan ke pemanggil tanpa klaim berikutnya.
+
+    Mengembalikan `(hasil, penuh)`. `hasil` = jumlah laporan putaran ini `{"terkirim", "gagal", "dilewati",
+    "dicoba_lagi"}` (`gagal` termasuk klaim basi yang percobaannya habis); laporan yang galat tanpa hasil tercatat
+    tidak dihitung (sudah dicatat di log). `penuh` = jumlah yang diambil tepat `KELOMPOK` dan putaran tidak dihentikan,
+    jadi mungkin masih ada antrean. Galat di luar satu laporan (langkah 1 dan 2) diteruskan ke pemanggil."""
+    jam = _jam if jam is None else jam
     mulai = jam()
     hasil = hasil_kosong()
     hasil["gagal"] += await _rapikan_klaim_basi(mulai)
@@ -155,17 +186,27 @@ async def proses_antrean_email(sekarang: datetime | None = None) -> dict:
             select(Report.id)
             .where(Report.email_status == STATUS_MENUNGGU, _boleh_dicoba(mulai))
             .order_by(Report.terbit_at, Report.id)
-            .limit(MAKS_EMAIL_PER_JALAN)
+            .limit(KELOMPOK)
         )).scalars().all()
     for report_id in ids:
+        if berhenti is not None and berhenti():
+            return hasil, False
+        if sebelum_laporan is not None:
+            await sebelum_laporan()
+            if berhenti is not None and berhenti():
+                return hasil, False
         try:
             keluaran = await _proses_laporan(report_id, jam)
         except Exception:
             logger.exception("email laporan %s gagal diproses; dicoba lagi di jalan berikutnya", report_id)
+            if sesudah_laporan is not None:
+                sesudah_laporan(None)
             continue
         if keluaran is not None:
             hasil[keluaran] += 1
-    return hasil
+            if sesudah_laporan is not None:
+                sesudah_laporan(keluaran)
+    return hasil, len(ids) == KELOMPOK
 
 
 async def _rapikan_klaim_basi(mulai: datetime) -> int:

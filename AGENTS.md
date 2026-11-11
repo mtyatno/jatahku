@@ -688,9 +688,11 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic stamp --purge e7b3d5a9c1f4` (`--purge`
   mengosongkan `alembic_version` dulu, jadi revisi yang tak dikenal tidak dicari), lalu jalankan ulang job deploy.
 
-## Deploy Checklist — Laporan berkala tahap 2: email (tanpa migrasi)
+## Deploy Checklist — Laporan berkala tahap 2: email (tanpa migrasi) — sudah jalan 2026-11-10
+Sejak worker email laporan (checklist di bawah), baris log email ada di journal `jatahku-worker`, bukan `jatahku`: ganti `-u jatahku` dengan `-u jatahku-worker` pada perintah `journalctl` untuk email laporan di checklist ini.
 Branch `feat/laporan-berkala-email`: laporan yang terbit dikirim ke email terverifikasi (ringkasan tanpa nominal, PDF
-berkata sandi terlampir), antrean email dengan coba ulang di dalam `laporan_job`, verifikasi email, berhenti berlangganan
+berkata sandi terlampir), antrean email dengan coba ulang di dalam `laporan_job` (sekarang: worker `jatahku-worker`),
+verifikasi email, berhenti berlangganan
 satu klik, dan saklar "Kirim laporan ke email" di Pengaturan → Laporan. **Tanpa migrasi, paket, atau `.env` baru** (kolom
 email sudah dibuat tahap 1), jadi tidak ada langkah alembic dan tidak ada jendela 500. Detail perilaku, batasan, dan
 pemulihan: `docs/laporan-berkala.md` bagian "Email laporan" dan "Pemulihan".
@@ -708,7 +710,8 @@ Setelah merge:
    Pengaturan dengan "Email terverifikasi. Laporan berikutnya juga dikirim ke email." dan status "Email …
    terverifikasi.". Tautan yang sama dibuka lagi langsung berakhir di Pengaturan dengan pesan yang sama, tanpa halaman
    dan tanpa mengubah apa pun. Akun Google dengan email yang sama sudah terverifikasi sendiri sesudah login Google.
-5. Log tanpa alamat (jalankan sesudah langkah 4, lalu lagi sesudah jam :30 yang mengirim email):
+5. Log tanpa alamat (jalankan sesudah langkah 4, lalu lagi sesudah jam :30 yang mengirim email (sekarang: worker
+   `jatahku-worker`)):
    `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan"` → hanya id laporan/user,
    angka, dan teks tetap (mis. `Email laporan terkirim`, `email laporan: N terkirim, …`); tanpa traceback. Tidak ada
    alamat: `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan" | grep -c '@'` → 0, dan
@@ -811,6 +814,91 @@ tidak kedaluwarsa (hanya bisa mematikan email laporan). Jalankan sesudah langkah
    domain (`/var/log/nginx/domains/jatahku.com.log.*` dan `api.jatahku.com.log.*`; cek dulu dengan `ls -la`). Statistik
    web HestiaCP yang dibaca dari log lama ikut hilang. Ulangi `zgrep -c` di langkah 1 nginx → 0.
 3. Cadangan server yang menyalin `/var/log` atau journal masih memuat baris lama sampai cadangan itu kedaluwarsa.
+
+## Deploy Checklist — Worker email laporan (tanpa migrasi)
+Branch `feat/worker-email-laporan`: antrean email laporan tidak lagi dijalankan `laporan_job` di proses API, tetapi oleh
+service systemd `jatahku-worker` (`python -m app.services.laporan.worker_email`) pada laju tetap `EMAIL_LAPORAN_PER_DETIK`
+(bawaan 3/detik). `laporan_job` hanya menerbitkan (batas 40 menit) dan memeriksa alarm. Kartu "Email laporan" di halaman
+Admin dan alarm Telegram ke admin. **Tanpa migrasi, paket, atau kunci `.env` baru** (`EMAIL_LAPORAN_PER_DETIK` opsional).
+Unit ada di `deploy/jatahku-worker.service` dan dipasang `deploy.sh`. Detail perilaku, alarm, dan pemulihan:
+`docs/laporan-berkala.md` bagian "Email laporan", "Pemantauan dan alarm", dan "Pemulihan".
+Sebelum merge:
+1. Worker tidak butuh variabel lingkungan yang hanya dimiliki unit API (unit worker tidak punya `Environment=` atau
+   `EnvironmentFile=`; aplikasi membaca `/opt/jatahku/.env` sendiri): `systemctl cat jatahku | grep -E '^(Environment|EnvironmentFile)='`
+   → tanpa keluaran. Bila ada baris, **berhenti**: tambahkan ke `deploy/jatahku-worker.service` lebih dulu (ubah PR ini).
+2. Alarm sampai ke Telegram admin: `sudo grep -cE '^(ADMIN_TELEGRAM_ID|TELEGRAM_BOT_TOKEN)=.' /opt/jatahku/.env` → `2`.
+   Kurang dari 2: alarm tidak terkirim (WARNING di journal `jatahku`); kartu Admin tetap menampilkannya.
+Setelah merge:
+3. Tunggu deploy hijau (`api.jatahku.com/health` → `commit` baru; `jatahku.com/version.json` → commit yang sama).
+4. **Jalankan deploy sekali lagi**: Actions → run "Deploy Jatahku" yang sudah selesai → "Re-run all jobs" (workflow ini
+   tidak punya pemicu manual), atau `sudo /opt/jatahku/deploy.sh` bila tidak ada deploy Actions yang berjalan. Deploy yang membawa `deploy.sh` baru masih menjalankan skrip lama (skrip yang
+   berubah oleh `git pull`-nya sendiri melanjutkan isi lama), jadi worker baru terpasang pada deploy kedua. Sebelum itu
+   email laporan menunggu di antrean (kode API baru sudah tidak mengirimnya), tanpa kehilangan.
+5. Worker berjalan:
+   ```bash
+   sudo systemctl status jatahku-worker        # Active: active (running); Loaded: … enabled
+   sudo journalctl -u jatahku-worker -n 20 --no-pager   # ada "worker email laporan menyala: 3.0 email per detik"
+   ```
+   (laju sesuai `EMAIL_LAPORAN_PER_DETIK`). Halaman Admin → kartu "Email laporan": Worker "Hidup · terakhir HH.MM" (tanda hidup
+   ditulis di awal setiap putaran, jadi langsung terlihat). Sesudah mengubah `EMAIL_LAPORAN_PER_DETIK`, restart
+   `jatahku-worker` (laju kirim) **dan** `jatahku` (kartu Admin membaca salinan API): `sudo systemctl restart jatahku-worker jatahku`.
+6. Kirim ulang satu email uji ke akun sendiri (akun harus berverifikasi email dan `email_on` menyala): pilih laporan akun
+   sendiri (`SELECT id, email_status FROM reports WHERE user_id = '<id user sendiri>' ORDER BY terbit_at DESC LIMIT 3`),
+   lalu jalankan UPDATE dari `docs/laporan-berkala.md` bagian "Pemulihan" ("Kirim ulang email"), tanpa bagian `AND
+   email_status IN ('gagal','dilewati')` bila laporannya sudah `terkirim` (aman: yang dikirimi akun sendiri). Dalam ±2
+   menit `email_status` = `terkirim` dan emailnya tiba di kotak masuk.
+7. Log tanpa alamat: `sudo journalctl -u jatahku-worker --since "1 hour ago" | grep -c '@'` → `0`.
+Yang dilakukan `deploy.sh` pada setiap deploy sejak ini: memasang unit (`cp` ke `/etc/systemd/system/`, `daemon-reload`,
+`enable`) bila isinya berbeda dari `deploy/jatahku-worker.service` atau belum di-enable; selalu `restart jatahku-worker`;
+membaca `NRestarts`, tidur 10 detik, lalu memeriksa worker aktif dan penghitung tidak berubah (unit bertipe `simple` "aktif"
+begitu proses dibuat, jadi worker yang langsung mati baru terlihat sesudahnya). Restart oleh systemd berarti proses mati
+saat menyala (impor atau konfigurasi salah); database atau Redis yang tidak terjangkau tidak mematikannya (worker tampil
+tidak hidup di kartu Admin, lihat "Pemulihan"). Pohon tanpa `deploy/jatahku-worker.service` (deploy revert): `⚠️  Unit
+worker tidak ada di repo — worker email laporan dihentikan`, `disable --now`, berkas unit dihapus, `daemon-reload`, deploy
+tidak gagal karenanya. Gagal → deploy lain tetap selesai, lalu
+berakhir dengan "Deploy GAGAL" dan exit 1 (bersama pesan `❌ Worker email laporan belum berjalan`; journal worker dicetak). Worker
+di-restart tiap deploy: kiriman yang sedang berjalan diselesaikan dulu (berhenti rapi), lalu pengiriman dilanjutkan begitu worker menyala.
+- **Rollback:** revert PR. Deploy revert menghentikan dan melepas worker sendiri (`deploy.sh` yang sama mendapati
+  `deploy/jatahku-worker.service` tidak ada: `disable --now`, unit dihapus, `daemon-reload`). Periksa:
+  `systemctl is-active jatahku-worker` → `inactive`. Kode yang di-revert mengirim email lagi dari `laporan_job` (jam :30
+  berikutnya).
+
+## Pindah penyedia email
+Kapan: alarm Telegram `pindah_penyedia` ("Penerima email laporan sudah N …"), yaitu ≥ 300 penerima sementara `SMTP_HOST`
+masih lokal (exim di VPS), atau kartu Admin menunjukkan penerima mendekati 300 / email laporan sering gagal. Volume ribuan
+email per hari dari IP VPS bisa dibatasi penyedia kotak surat, dan aplikasi tidak tahu email yang ditolak sesudah diterima
+exim (bounce). Penyedia email transaksional (layanan SMTP relay) melaporkannya. Kredensial penyedia hanya di
+`/opt/jatahku/.env`, tidak pernah di repo (repo ini publik).
+1. Pilih penyedia yang mengizinkan **lampiran PDF** (±30–100 KB per email) dan header **`List-Unsubscribe`** /
+   `List-Unsubscribe-Post` (RFC 8058), dan yang bisa SMTP dengan STARTTLS (kode memakai `smtplib.SMTP` + `starttls()` pada
+   `SMTP_PORT`, mis. 587).
+2. Verifikasi domain pengirim (`jatahku.com`) di penyedia, lalu pasang rekaman DNS yang diminta: SPF (gabungkan `include:` penyedia
+   ke SPF yang ada, jangan membuat dua rekaman SPF) dan DKIM. DMARC tetap `p=none` (lihat CLAUDE.md). Tunggu penyedia
+   menyatakan domain terverifikasi.
+3. Ganti di `/opt/jatahku/.env`: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` dengan nilai dari penyedia
+   (`SMTP_FROM` tetap alamat di domain terverifikasi, mis. `noreply@jatahku.com`). Kredensial hanya diketik di server,
+   jangan ditempel ke chat, issue, atau PR.
+4. Restart **keduanya**, karena API dan worker membaca `.env` saat start:
+   `sudo systemctl restart jatahku jatahku-worker`, lalu `sudo systemctl status jatahku-worker` dan
+   `sudo journalctl -u jatahku-worker -n 5 --no-pager`.
+5. Tes: minta email reset password ke akun sendiri ("Lupa password?" di halaman Login) → email tiba (bukan di spam). Di
+   Gmail: ⋮ → "Tampilkan versi asli": **SPF, DKIM, dan DMARC semuanya PASS**. Lalu kirim ulang satu email laporan uji
+   (UPDATE yang sama seperti checklist worker) → `terkirim`, PDF terlampir terbuka dengan kata sandi laporan, dan
+   `sudo journalctl -u jatahku-worker --since "10 min ago" | grep -c '@'` → `0`.
+6. Sesuaikan laju: `EMAIL_LAPORAN_PER_DETIK` di `.env` dengan kuota penyedia (batas per detik/per jam/per hari; nilai
+   dibatasi 0,1–20, bawaan 3; koma desimal boleh, `0,5`), lalu `sudo systemctl restart jatahku-worker jatahku`. Laju
+   terendah 0,1/detik = 360 email per jam: kuota per jam di bawah itu tidak bisa diikuti dengan laju. Penyedia yang menolak
+   karena kuota tidak menggagalkan antrean: sesudah 5 kiriman gagal beruntun worker berjeda 5 menit (pemutus,
+   `docs/laporan-berkala.md` bagian "Email laporan"), jadi tiap jeda paling banyak lima laporan kehilangan satu percobaan. Hitung: 10.000 penerima pada 3/detik ±56 menit.
+   **Satu worker paling cepat ±8 email/detik** karena tiap email membuat PDF: nilai di atas itu tidak berpengaruh (diukur
+   lokal, SQLite in memory: 2.000 email dalam 262 detik, CPU 95% dari satu inti; pada 3/detik worker memakai ±40% satu inti,
+   200 email = 25,5 detik CPU dalam 66,7 detik). Kuota penyedia di atas ±8/detik tidak bisa dimanfaatkan oleh satu worker.
+7. Sesudah beberapa hari: alarm `pindah_penyedia` berhenti sendiri (syaratnya `SMTP_HOST` lokal); pantau kartu Admin ("Gagal
+   7 hari") dan dasbor penyedia (bounce, keluhan spam). Laporan yang menjadi `gagal` selama gangguan atau masa pindah:
+   kirim ulang massal dengan UPDATE berjendela waktu `email_terakhir_at` di `docs/laporan-berkala.md` bagian "Pemulihan"
+   ("Kirim ulang email"; tidak pernah menyentuh `terkirim`).
+- **Rollback:** kembalikan empat nilai `SMTP_*` lama di `.env` dan restart `jatahku` dan `jatahku-worker`. Email yang sudah
+  `terkirim` tidak dikirim ulang.
 
 ## Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)
 Tahap 2 belajar lintas user (branch `feat/kotak-belajar-2`, label `migrasi`): kolom `receipt_scans.sample_lines` (JSONB
