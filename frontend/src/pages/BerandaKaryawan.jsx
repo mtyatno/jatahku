@@ -1,6 +1,7 @@
 // Beranda template "Karyawan" (Plugin R6): untuk karyawan (peran member) di ruang usaha. Tata letak dan data dari
 // registry yang sama dengan Beranda biasa (GET /dashboard/layout, POST /dashboard/data); server hanya mengirim
 // kartu karyawan. Tanpa pemilih periode, laporan, atau onboarding amplop: itu milik pemilik dan admin.
+// U4: kartu Fitur Tambahan `untuk: "karyawan"` (mis. Penjualan saya dari Buku Usaha) ikut di tata letak dari server.
 //
 // Di luar jam kerja (ADR-P17) server menjawab 403 `di_luar_jam_kerja` + `buka_lagi`: Beranda menampilkan kapan
 // ruang dibuka lagi, dan pemilih ruang tetap bisa dipakai untuk kembali ke ruang keluarga.
@@ -48,7 +49,7 @@ function Tutup({ detail, bukaLagi, ruangNama }) {
 export default function BerandaKaryawan() {
   const { user } = useAuth();
   const { mode } = useTheme();
-  const { ruang } = useOutletContext() || {};
+  const { ruang, plugin } = useOutletContext() || {};
   const phone = useIsPhone();
   const uid = user?.id;
   const ruangNama = ruang?.aktif?.nama;
@@ -85,7 +86,11 @@ export default function BerandaKaryawan() {
     return () => { live = false; };
   }, [uid, tick]);
 
-  const items = useMemo(() => itemsForData(layout, knownCard), [layout]);
+  // U4: kartu Fitur Tambahan untuk karyawan didaftarkan Layout sesudah katalog kartunya termuat; daftar instans
+  // dihitung ulang saat itu (CardRegistry global modul, jadi kuncinya ikut dependensi).
+  const kunciPlugin = plugin?.kartuKaryawan || '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const items = useMemo(() => itemsForData(layout, knownCard), [layout, kunciPlugin]);
   const itemsKey = JSON.stringify(items);
 
   useEffect(() => {
