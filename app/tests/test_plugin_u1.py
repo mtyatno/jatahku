@@ -199,11 +199,11 @@ class RuteManifestTests(unittest.TestCase):
         self.assertEqual(m.data_lifecycle.export, ["csv", "json"])
         self.assertIsNotNone(reg.kode_plugin("buku_usaha"))
         self.assertEqual(kode_mod.periksa_impor(FOLDER_BU, m), [])
-        # Belum ada kartu, cek, saran, bot, job, kamus: titik ekstensi lain tidak bekerja karena plugin ini (U4–U6).
-        # U2 menambah field form pengeluaran beserta penyimpanannya.
-        for jenis in ("kartu", "cek", "aturan_advisor", "perintah_bot", "job"):
+        # Belum ada cek, saran, bot, job, kamus: titik ekstensi lain tidak bekerja karena plugin ini (U5–U6).
+        # U2 menambah field form pengeluaran beserta penyimpanannya; U4 menambah kartu Beranda.
+        for jenis in ("cek", "aturan_advisor", "perintah_bot", "job"):
             self.assertFalse(reg.punya(jenis), jenis)
-        for jenis in ("rute", "field_form", "simpan_field"):
+        for jenis in ("rute", "field_form", "simpan_field", "kartu"):
             self.assertTrue(reg.punya(jenis), jenis)
 
     def test_cocok_pola(self):
@@ -383,7 +383,9 @@ class U1DbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.aksi("lanjut"))["status"], "aktif")
         k = await self.kontribusi()
         self.assertEqual([(n["grup"], n["route"], n["label"]) for n in k["nav"]], [("usaha", "/p/buku_usaha", "Buku Usaha")])
-        self.assertEqual(k["cards"], [])
+        # U4: kartu Beranda untuk pengelola ikut kontribusi saat aktif (kartu karyawan tidak pernah di sini).
+        self.assertEqual({c["plugin"] for c in k["cards"]}, {"buku_usaha"})
+        self.assertNotIn("buku_usaha.penjualan_saya", [c["key"] for c in k["cards"]])
         peng = (await self.p("GET", "/pengaturan", status=200)).json()
         self.assertEqual(peng["ruang"], "Dapur Nusa")
         self.assertEqual([(a["nama"], a["ada"]) for a in peng["amplop_bawaan"]],

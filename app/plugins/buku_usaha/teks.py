@@ -29,6 +29,19 @@ TEMPLAT = {
     "terpotong": ("Daftar {apa} memuat {tampil} catatan terbaru dari {total}; angka di ringkasan tetap mencakup "
                   "semuanya."),
     "kosong": "Belum ada catatan di bulan ini.",
+    # U4: kartu Beranda. Angka dari `metrics.py`; kalimatnya dari sini.
+    "kartu_banyak_penjualan": "{banyak} penjualan",
+    "kartu_omzet_kaki": "{bulan} · bulan lalu {lalu}",
+    "kartu_margin": "margin {margin}",
+    "kartu_laba_kaki": "{bulan} · omzet {omzet} − beban {beban}",
+    "kartu_kas_amplop": "{banyak} amplop",
+    "kartu_kas_kaki": "Sisa semua amplop bersama saat ini",
+    "kartu_kas_minus": "Sisa semua amplop bersama saat ini · {minus} amplop minus",
+    "kartu_alokasi_label": "{nama} · {persen}",
+    "kartu_masuk": "Masuk",
+    "kartu_keluar": "Keluar",
+    "kartu_kontak_terhapus": "Kontak terhapus",
+    "kartu_saya_kaki": "{bulan} · penjualan yang kamu catat sendiri",
 }
 
 
@@ -45,6 +58,19 @@ def nama_bulan(periode: str) -> str:
 
 def tanggal(d: date) -> str:
     return f"{d.day} {BLN[d.month]} {d.year}"
+
+
+def hari_bulan(d: date) -> str:
+    """Label pendek sumbu grafik: "9 Nov"."""
+    return f"{d.day} {BLN[d.month]}"
+
+
+def perubahan(r: Decimal | None) -> str:
+    """Rasio perubahan → "+9,1%" / "-12,5%" / "0%"; None (tidak ada pembanding) → ""."""
+    if r is None:
+        return ""
+    p = persen(r)
+    return p if p.startswith("-") or p == "0%" else f"+{p}"
 
 
 def rupiah(v: Decimal) -> str:

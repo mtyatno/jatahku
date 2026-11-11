@@ -12,10 +12,15 @@ pengeluaran inti (`field_form` + `simpan_field` → `txn_meta`). Pembagian dihit
 U3: laba rugi per bulan kalender (`/laba-rugi`, angka dari `metrics.py`) dan laporan PDF/CSV (`/laporan`: plugin menyusun
 `Laporan` di `laporan.py`, host menggambarnya). Butuh izin baca `transactions:read` + `incomes:read` (izin baru untuk
 instalasi lama, disetujui lewat `POST …/izin`).
+
+U4: delapan kartu Beranda (bentuk deklaratif; angka dari `metrics.py`, bentuk dan kalimat dari `kartu.py`/`teks.py`).
+Tujuh kartu untuk pemilik dan admin; `penjualan_saya` untuk karyawan dan hanya membaca catatan karyawan itu sendiri
+(`ctx.ringkas_pemasukan_saya`). Kartu memakai bulan kalender (`metrics.bulan_kartu`), bukan periode siklus Beranda.
 """
 import re
 
 from app.plugins.buku_usaha import alokasi as al
+from app.plugins.buku_usaha import kartu as bentuk
 from app.plugins.buku_usaha import laporan as lap
 from app.plugins.buku_usaha import metrics
 from app.plugins.sdk import GalatRute, Jawaban, NilaiTidakSah, Plugin
@@ -380,3 +385,72 @@ async def unduh_laporan(ctx, req):
     hari = metrics.hari_ini(ctx)
     th, bl = metrics.periode(req.query.get("periode"), hari)
     return await lap.laba_rugi(ctx, th, bl, fmt, hari)
+
+
+# ── U4: kartu Beranda ────────────────────────────────────────────────────
+BACA_ANGKA = ["transactions:read", "incomes:read"]
+
+
+async def _laba_rugi_kartu(ctx, periode) -> dict:
+    hari = metrics.hari_ini(ctx)
+    th, bl = metrics.bulan_kartu(periode, hari)
+    return await metrics.laba_rugi(ctx, th, bl, hari)
+
+
+@plugin.kartu("buku_usaha.omzet", izin=BACA_ANGKA)
+async def kartu_omzet(ctx, pengaturan, periode):
+    return bentuk.omzet(await _laba_rugi_kartu(ctx, periode))
+
+
+@plugin.kartu("buku_usaha.laba", izin=BACA_ANGKA)
+async def kartu_laba(ctx, pengaturan, periode):
+    return bentuk.laba(await _laba_rugi_kartu(ctx, periode))
+
+
+@plugin.kartu("buku_usaha.kas", izin=["envelopes:read"])
+async def kartu_kas(ctx, pengaturan, periode):
+    """Sisa amplop bersama saat ini (bukan per periode yang dipilih di Beranda)."""
+    return bentuk.kas(await metrics.kas_usaha(ctx))
+
+
+@plugin.kartu("buku_usaha.arus_kas_13", izin=BACA_ANGKA)
+async def kartu_arus_kas(ctx, pengaturan, periode):
+    return bentuk.arus_kas(await metrics.arus_kas_13(ctx, metrics.hari_ini(ctx)))
+
+
+@plugin.kartu("buku_usaha.alokasi_omzet", izin=["envelopes:read", *BACA_ANGKA])
+async def kartu_alokasi(ctx, pengaturan, periode):
+    amplop = await _amplop_bersama(ctx)
+    aturan, siap = await _aturan(ctx, amplop)
+    if not siap:
+        return bentuk.alokasi([])
+    th, bl = metrics.bulan_kartu(periode, metrics.hari_ini(ctx))
+    aturan = [{"envelope_id": str(a["envelope_id"]), "nama": a["nama"], "persen": a["persen"],
+               "tujuan": amplop[str(a["envelope_id"])].tujuan} for a in aturan]
+    return bentuk.alokasi(metrics.alokasi_omzet(aturan, await metrics.omzet_penjualan(ctx, th, bl),
+                                                await metrics.terpakai_per_amplop(ctx, th, bl)))
+
+
+@plugin.kartu("buku_usaha.beban_akun", izin=BACA_ANGKA)
+async def kartu_beban(ctx, pengaturan, periode):
+    return bentuk.beban(await _laba_rugi_kartu(ctx, periode))
+
+
+@plugin.kartu("buku_usaha.pelanggan_teratas", izin=["incomes:read"])
+async def kartu_pelanggan(ctx, pengaturan, periode):
+    th, bl = metrics.bulan_kartu(periode, metrics.hari_ini(ctx))
+    baris = await metrics.pelanggan_bulan(ctx, th, bl)
+    kontak = ctx.data("kontak")
+    nama = {}
+    for b in baris:
+        k = await kontak.ambil(b["kontak_id"])
+        if k is not None:
+            nama[b["kontak_id"]] = k["nama"]
+    return bentuk.pelanggan(baris, nama)
+
+
+@plugin.kartu("buku_usaha.penjualan_saya", izin=["incomes:read"])
+async def kartu_penjualan_saya(ctx, pengaturan, periode):
+    """Kartu karyawan: hanya penjualan yang dicatat karyawan itu sendiri bulan ini; tidak ada angka ruang."""
+    th, bl = metrics.bulan_kartu(periode, metrics.hari_ini(ctx))
+    return bentuk.penjualan_saya(await metrics.penjualan_saya_bulan(ctx, th, bl), metrics.kunci(th, bl))
