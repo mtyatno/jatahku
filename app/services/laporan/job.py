@@ -52,8 +52,10 @@ alarm tetap dijalankan. Jalan yang menerbitkan, menggagalkan, atau menunda sesua
 durasi (detik) dan ketiga angkanya; jalan sepi tiap jam tidak menambah log.
 
 Alarm: sesudah sapu, `laporan_job` memanggil `pantau_email.periksa_alarm` (spec worker email bagian 6) dengan sesi
-database dan klien Redis miliknya sendiri; galat apa pun darinya dicatat dan tidak mengubah hasil job.
+database dan klien Redis miliknya sendiri, berbatas waktu `BATAS_WAKTU_ALARM` (60 detik); galat apa pun darinya,
+termasuk habis waktu, dicatat dan tidak mengubah hasil job.
 """
+import asyncio
 import html
 import logging
 import time as waktu_mod
@@ -86,6 +88,7 @@ JENDELA_TERBIT_HARI = 7
 # Household baru tidak dimulai sesudah selama ini sejak `laporan_job` mulai (jalan berikutnya menyelesaikan sisanya).
 BATAS_JALAN = timedelta(minutes=40)
 _BATAS_WAKTU_REDIS = 5   # detik; Redis yang menggantung tidak boleh menahan job
+BATAS_WAKTU_ALARM = 60  # detik; pemeriksaan alarm yang menggantung (DB, Telegram) tidak boleh menahan job
 _PESAN_NOTIFIKASI = "Lihat bagaimana periode kemarin berjalan."
 
 
@@ -307,19 +310,26 @@ async def kirim_notifikasi_tertunda(today: date, kecuali=frozenset()) -> int:
 
 
 async def _periksa_alarm_email() -> None:
-    """Pemeriksaan alarm email laporan dengan sesi dan klien Redis milik sendiri (ditutup di sini). Galat apa pun,
-    termasuk saat membuka Redis atau sesi, dicatat dan tidak pernah dilempar: alarm tidak boleh mengubah hasil job."""
+    """Pemeriksaan alarm email laporan dengan sesi dan klien Redis milik sendiri (ditutup di sini), berbatas waktu
+    `BATAS_WAKTU_ALARM`. Galat apa pun, termasuk saat membuka Redis atau sesi, dan habis waktu dicatat dan tidak pernah
+    dilempar: alarm tidak boleh mengubah hasil job."""
+
+    async def periksa(redis):
+        async with AsyncSessionLocal() as db:
+            await pantau_email.periksa_alarm(
+                db, redis, datetime.now(timezone.utc),
+                kirim=pantau_email.kirim_telegram_admin, api_menyala=pantau_email.API_MENYALA,
+            )
+
     try:
         redis = aioredis.from_url(get_settings().REDIS_URL, socket_timeout=_BATAS_WAKTU_REDIS,
                                   socket_connect_timeout=_BATAS_WAKTU_REDIS)
         try:
-            async with AsyncSessionLocal() as db:
-                await pantau_email.periksa_alarm(
-                    db, redis, datetime.now(timezone.utc),
-                    kirim=pantau_email.kirim_telegram_admin, api_menyala=pantau_email.API_MENYALA,
-                )
+            await asyncio.wait_for(periksa(redis), BATAS_WAKTU_ALARM)
         finally:
             await redis.aclose()
+    except asyncio.TimeoutError:
+        logger.error("pemeriksaan alarm email laporan melewati batas waktu; dicoba lagi jam berikutnya")
     except Exception:
         logger.exception("pemeriksaan alarm email laporan gagal; dicoba lagi jam berikutnya")
 

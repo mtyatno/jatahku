@@ -728,6 +728,32 @@ class LaporanJobTests(JobTestCase):
         self.assertIsNotNone(catatan.exc_info)             # logger.exception
         self.redis.aclose.assert_awaited_once()            # Redis ditutup walau pemeriksaan gagal
 
+    async def test_alarm_yang_menggantung_dibatasi_waktu(self):
+        # F-7: pemeriksaan alarm berjalan di bawah batas waktu (60 detik; di sini dipendekkan); habis waktu dicatat
+        # dengan teks tetap, hasil job tidak berubah, Redis tetap ditutup.
+        self.assertEqual(job.BATAS_WAKTU_ALARM, 60)
+        rumah, ani = rumah_tangga(), orang("Ani")
+        self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
+        dibatalkan = []
+
+        async def menggantung(*args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                dibatalkan.append(True)
+                raise
+
+        self.alarm.side_effect = menggantung
+        with patch.object(job, "BATAS_WAKTU_ALARM", 0.05), self.assertLogs("jatahku.laporan", "ERROR") as logs:
+            hasil = await asyncio.wait_for(job.laporan_job(HARI_TERBIT), 5)
+
+        self.assertEqual(hasil, {"terbit": 1, "gagal": 0, "ditunda": 0})
+        self.assertEqual(dibatalkan, [True])
+        [catatan] = logs.records
+        self.assertEqual(catatan.getMessage(),
+                         "pemeriksaan alarm email laporan melewati batas waktu; dicoba lagi jam berikutnya")
+        self.redis.aclose.assert_awaited_once()
+
     async def test_galat_membuka_redis_tidak_membatalkan_job(self):
         self.pasang([FakeResult(rows=[])], rumah=[])
         self.dari_url.side_effect = RuntimeError("url rusak")

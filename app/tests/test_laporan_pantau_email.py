@@ -151,6 +151,14 @@ class PantauTests(unittest.IsolatedAsyncioTestCase):
                      "gagal_7_hari", "penerima", "ambang_penerima", "smtp_lokal", "laju_per_detik"})
         self.assertEqual((k["ambang_penerima"], k["smtp_lokal"], k["laju_per_detik"]), (300, True, 3.0))
 
+    async def test_awalan_nonaktif_tanpa_wildcard_like(self):
+        # F-9: `_` di LIKE cocok dengan karakter apa pun; "deleted1@…" dan "bannedX…" tetap penerima.
+        await self.user("deleted1@contoh.id")
+        await self.user("bannedx_a@contoh.id")
+        await self.user("deleted_lama@contoh.id")
+        await self.user("banned_lama@contoh.id")
+        self.assertEqual((await self.keadaan())["penerima"], 2)
+
     async def test_tanpa_menunggu_tertua_none(self):
         k = await self.keadaan()
         self.assertEqual((k["menunggu"], k["tertua_menit"], k["penerima"]), (0, None, 0))
@@ -170,7 +178,8 @@ class PantauTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(k["worker_hidup"])
         k = await self.keadaan(RedisPalsu(tanda(T0 - 11 * MENIT, sebagai_bytes=False)))   # str (klien decode)
         self.assertEqual((k["worker_hidup"], k["worker_terakhir"]), (False, (T0 - 11 * MENIT).isoformat()))
-        for redis in (RedisPalsu(None), RedisPalsu(galat=ConnectionError("x")), None, RedisPalsu(b"bukan waktu")):
+        for redis in (RedisPalsu(None), RedisPalsu(galat=ConnectionError("x")), None, RedisPalsu(b"bukan waktu"),
+                      RedisPalsu(b"0001-01-01T00:00:00+05:00"), RedisPalsu(b"\xff")):   # F-9: OverflowError
             k = await self.keadaan(redis)
             self.assertEqual((k["worker_hidup"], k["worker_terakhir"]), (False, None))
 
@@ -237,6 +246,48 @@ class PantauTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.periksa(kirim, sekarang=T0 + 24 * JAM), ["worker_mati"])
         self.assertEqual(kirim.await_count, 2)
         self.assertEqual(await self.baca_alarm("worker_mati"), (T0 + 24 * JAM).isoformat())
+
+    async def test_alarm_per_kejadian_worker_mati(self):
+        # F-3: worker pulih pada pemeriksaan berikutnya → catatan alarmnya dihapus; mati lagi 5 jam sesudah alarm
+        # pertama → langsung dikirim lagi (kejadian baru), bukan menunggu 24 jam.
+        kirim = AsyncMock(return_value=True)
+        self.assertEqual(await self.periksa(kirim), ["worker_mati"])
+        self.assertEqual(await self.periksa(kirim, RedisPalsu(tanda(T0 + JAM - MENIT)), sekarang=T0 + JAM), [])
+        self.assertIsNone(await self.baca_alarm("worker_mati"))
+        self.assertEqual(await self.periksa(kirim, sekarang=T0 + 5 * JAM), ["worker_mati"])
+        self.assertEqual(kirim.await_count, 2)
+        self.assertEqual(await self.baca_alarm("worker_mati"), (T0 + 5 * JAM).isoformat())
+        # Kejadian yang berlanjut: batas ulangnya tetap.
+        self.assertEqual(await self.periksa(kirim, sekarang=T0 + 6 * JAM), [])
+        self.assertEqual(kirim.await_count, 2)
+
+    async def test_alarm_per_kejadian_tersendat_dan_pindah_penyedia(self):
+        hidup = RedisPalsu(tanda(T0 - MENIT))
+        u = await self.user(terverifikasi=False)
+        await self.laporan(u, status="menunggu", terbit=T0 - 400 * MENIT)
+        await self.catat_alarm("pindah_penyedia", T0 - HARI)
+        kirim = AsyncMock(return_value=True)
+        self.assertEqual(await self.periksa(kirim, hidup), ["antrean_tersendat"])
+        self.assertIsNone(await self.baca_alarm("pindah_penyedia"))      # 0 penerima: syaratnya tidak berlaku
+        async with self.Session() as db:
+            await db.execute(Report.__table__.update().values(email_status="terkirim"))
+            await db.commit()
+        waktu = T0 + JAM
+        self.assertEqual(await self.periksa(kirim, RedisPalsu(tanda(waktu - MENIT)), sekarang=waktu), [])
+        self.assertIsNone(await self.baca_alarm("antrean_tersendat"))
+
+    async def test_email_gagal_tidak_pernah_dihapus(self):
+        hidup = RedisPalsu(tanda(T0 - MENIT))
+        await self.catat_alarm("email_gagal", T0 - 2 * JAM)
+        kirim = AsyncMock(return_value=True)
+        self.assertEqual(await self.periksa(kirim, hidup), [])            # tidak ada gagal baru
+        self.assertEqual(await self.baca_alarm("email_gagal"), (T0 - 2 * JAM).isoformat())
+
+    async def test_masa_tenang_tidak_menghapus_alarm_worker_mati(self):
+        await self.catat_alarm("worker_mati", T0 - 2 * JAM)
+        kirim = AsyncMock(return_value=True)
+        self.assertEqual(await self.periksa(kirim, api_menyala=T0 - MENIT), [])
+        self.assertEqual(await self.baca_alarm("worker_mati"), (T0 - 2 * JAM).isoformat())
 
     async def test_pindah_penyedia_ulang_30_hari(self):
         async with self.Session() as db:
