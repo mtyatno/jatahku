@@ -328,31 +328,47 @@ Antrean baru (laporan terbit, kirim ulang manual) jadi terlihat dalam ±1 menit.
 - **Laju tetap** (`EMAIL_LAPORAN_PER_DETIK` di `.env`, bawaan 3): `Pemacu` menjaga jarak `1 / laju` detik antara
   **awal** dua kiriman, jadi kiriman lambat tidak menambah jeda dan kiriman yang lebih lambat dari jarak itu tidak
   dihentikan (laju sebenarnya lalu ditentukan kecepatan kirim, bukan pacu). Nilainya teks yang diurai
-  `laju_dari_pengaturan`: kosong atau bukan angka → 3 (WARNING `EMAIL_LAPORAN_PER_DETIK bukan angka; dipakai bawaan 3.0
-  email per detik`, tanpa isi nilainya); di luar 0,1–20 → batas terdekat (WARNING). Nilai `.env` apa pun tidak menggagalkan
-  API maupun worker. Ubah → `sudo systemctl restart jatahku-worker`. Pada 3/detik, 10.000 email ±56 menit pacu.
+  `laju_dari_pengaturan`: satu koma dibaca sebagai pemisah desimal (`0,5` = 0,5/detik); kosong atau bukan angka → 3
+  (WARNING `EMAIL_LAPORAN_PER_DETIK bukan angka; dipakai bawaan 3.0 email per detik`, tanpa isi nilainya); di luar 0,1–20 →
+  batas terdekat (WARNING). Nilai `.env` apa pun tidak menggagalkan API maupun worker. Ubah →
+  `sudo systemctl restart jatahku-worker jatahku` (worker: laju kirim; API: kartu Admin membaca salinannya sendiri). Pada
+  3/detik, 10.000 email ±56 menit pacu. Laju terendah 0,1/detik = 360 email per jam.
   **Satu worker paling cepat ±8 email per detik**, karena tiap email membuat PDF (±0,12 detik CPU) di satu proses:
   `EMAIL_LAPORAN_PER_DETIK` di atas itu tidak berpengaruh (dibatasi 20, tetapi tidak tercapai). Diukur lokal (SQLite in
   memory, pengirim tiruan, PDF sungguhan): 2.000 email pada 20/detik selesai dalam 262 detik dengan CPU 95% dari satu inti
   (±7,6 email/detik); 200 email pada 3/detik selesai dalam 66,7 detik dengan CPU 25,5 detik, jadi pada laju bawaan worker
   memakai ±40% satu inti selama mengirim. Angka produksi bergantung pada CPU VPS dan waktu SMTP.
-- **Tanda hidup:** kunci Redis `laporan:worker_email:hidup` (`KUNCI_HIDUP`), nilai waktu UTC ISO, TTL 900 detik, ditulis di
-  awal setiap putaran dan diperbarui di tengah putaran panjang (dicek sebelum tiap laporan) bila sudah `JEDA_TANDA` = 60
-  detik sejak tanda terakhir. Worker dianggap hidup bila
-  tandanya ≤ 10 menit (`pantau_email.BATAS_HIDUP`). Redis tidak terjangkau tidak menghentikan pengiriman: dicatat sekali
-  per putaran (`tanda hidup worker email laporan tidak bisa ditulis ke Redis; pengiriman lanjut`, tanpa pesan galatnya),
-  dan kartu Admin menampilkan worker tidak hidup.
+- **Tanda hidup** berarti "putaran terakhir berjalan": kunci Redis `laporan:worker_email:hidup` (`KUNCI_HIDUP`), nilai
+  waktu UTC ISO, TTL 7200 detik (2 jam), ditulis di awal setiap putaran dan diperbarui di tengah putaran panjang (dicek
+  sebelum tiap laporan) bila sudah `JEDA_TANDA` = 60 detik sejak tanda terakhir. Putaran yang langsung menyusul putaran
+  galat (mis. database tidak terjangkau) tidak menulisnya di awal, tetapi begitu ia selesai; putaran pertama sesudah
+  menyala selalu menulis. Jadi worker yang tidak bisa mencapai database tampil **tidak hidup**, walau prosesnya berjalan.
+  Worker dianggap hidup bila tandanya ≤ 10 menit (`pantau_email.BATAS_HIDUP`); TTL 2 jam hanya supaya alarm `worker_mati`
+  masih bisa menyebut "sejak HH:MM WIB" sampai dua jam sesudah putaran baik terakhir. Redis tidak terjangkau tidak
+  menghentikan pengiriman: dicatat sekali per putaran (`tanda hidup worker email laporan tidak bisa ditulis ke Redis;
+  pengiriman lanjut`, tanpa pesan galatnya), dan kartu Admin menampilkan worker tidak hidup.
+- **Pemutus gagal beruntun:** worker menghitung hasil laporan yang diproses (`putaran_antrean(sesudah_laporan=…)`):
+  `gagal`, `dicoba_lagi`, dan galat pemrosesan berturut-turut menambah hitungan, `terkirim` mereset, `dilewati`
+  membiarkan (klaim yang kalah dari pengirim lain tidak dihitung). Pada `BATAS_GAGAL_BERUNTUN` = 5 putaran itu tidak
+  mengklaim laporan lagi (laporan berikutnya tidak kehilangan percobaan), worker mencatat WARNING `email laporan: 5
+  kiriman berturut-turut gagal; worker jeda 5 menit`, menunggu `JEDA_GANGGUAN` = 300 detik (terputus seketika oleh
+  permintaan berhenti), mereset hitungan, lalu lanjut. SMTP atau penyedia yang mati/menolak (termasuk karena kuota)
+  menghabiskan satu percobaan dari paling banyak lima laporan per 5 menit, bukan seluruh antrean.
 - **Berhenti** (`systemctl stop`/`restart`, SIGTERM atau SIGINT): `putaran_antrean` memeriksa permintaan berhenti sebelum
   dan sesudah pacu, tepat sebelum klaim, jadi tidak ada putaran atau klaim baru; kiriman yang sedang berjalan
   diselesaikan dan hasilnya ditulis, lalu proses keluar 0. Jeda 60 detik terputus seketika. Unit memberi `TimeoutStopSec=60`
   (cukup untuk satu kiriman: batas SMTP 30 detik). Klaim yang tertinggal karena proses mati paksa dikembalikan langkah 1
   sesudah 30 menit.
-- Unit: `Restart=always`, `RestartSec=5`, `Nice=5`, tanpa `EnvironmentFile` (aplikasi membaca `.env` sendiri).
+- Unit: `Restart=always`, `RestartSec=5`, `Nice=5`, `NoNewPrivileges=true`, tanpa `EnvironmentFile` (aplikasi membaca
+  `.env` sendiri). Restart oleh systemd (`NRestarts` bertambah) berarti proses mati saat menyala: impor atau konfigurasi
+  salah. Database atau Redis yang tidak terjangkau tidak mematikannya (putaran galat dicatat, worker mencoba lagi tiap 60
+  detik, tanda hidup berhenti).
 - Hanya **satu** worker: dua worker tidak menggandakan email (klaim bersyarat), tetapi laju totalnya dua kali; naikkan laju
   lewat `EMAIL_LAPORAN_PER_DETIK`, bukan dengan worker kedua.
 
 Jadi SMTP mati berjam-jam menghasilkan paling banyak tiga percobaan per laporan, berjarak ≥ 55 menit (praktisnya ±1 jam
-berurutan), lalu `gagal`; satu laporan gagal tidak menghentikan antrean. **Batas waktu SMTP 30 detik**
+berurutan), lalu `gagal`; satu laporan gagal tidak menghentikan antrean, dan pemutus membatasi laporan yang terkena
+menjadi paling banyak lima per 5 menit selama gangguan. **Batas waktu SMTP 30 detik**
 (`email_service.SMTP_TIMEOUT`, di `_deliver`, untuk setiap email): server SMTP yang macet harus gagal cepat dan tidak
 menahan antrean; batas yang terlampaui menjadi kiriman gagal biasa. Kasus langka: kiriman berhasil tetapi hasilnya tidak bisa
 disimpan (proses mati) → klaim basi dikembalikan langkah 1 dan email terkirim dua kali; dipilih daripada email hilang.
@@ -375,7 +391,8 @@ di Pengaturan → Laporan."), dan "Tautan tidak berlaku" (400). Menyalakan lagi:
 
 **Log** (hanya id laporan/user, angka, dan teks tetap; tidak pernah alamat, kata sandi, token, atau isi laporan; galat
 SMTP hanya dengan nama jenisnya karena pesannya bisa memuat alamat). **Sejak worker, baris pengiriman email laporan ada di
-journal `jatahku-worker`, bukan `jatahku`** (worker mencatat INFO ke stderr, jadi semuanya tampil):
+journal `jatahku-worker`, bukan `jatahku`** (worker mencatat ke stderr: logger `jatahku` mulai INFO, pustaka pihak ketiga
+mulai WARNING, supaya fontTools tidak menulis ±70 baris per PDF):
 ```bash
 sudo journalctl -u jatahku-worker --since "1 hour ago" | grep -iE "email laporan|PDF laporan"
 sudo journalctl -u jatahku-worker -n 50 --no-pager
@@ -386,13 +403,15 @@ start dan stop), `email laporan: N terkirim, M gagal, K dilewati, L dicoba lagi`
 percobaan ke-N; tidak dicoba lagi (alasan smtp)`, `email laporan <id> masih berstatus mengirim lebih dari 30 menit …`,
 `email laporan <id> gagal diproses …`, peringatan lampiran (`… email laporan dikirim tanpa lampiran PDF`), `PDF laporan <id> gagal
 dibuat (<jenis galat>); email dikirim tanpa lampiran`, peringatan laju (`EMAIL_LAPORAN_PER_DETIK …`), peringatan tanda hidup
-Redis, dan `putaran email laporan gagal; dicoba lagi dalam 60 detik`. `grep -iE "email laporan|PDF laporan"` menangkap
+Redis, `email laporan: 5 kiriman berturut-turut gagal; worker jeda 5 menit` (pemutus), dan `putaran email laporan gagal;
+dicoba lagi dalam 60 detik`. `grep -iE "email laporan|PDF laporan"` menangkap
 semuanya kecuali peringatan laju (`EMAIL_LAPORAN_PER_DETIK …`).
 
 Yang tetap di journal `jatahku` (proses API): baris penerbitan `laporan_job` (`household=… payday=…`, `laporan_job
 melewati batas 40 menit …`, `laporan_job selesai dalam …`, notifikasi), baris alarm (`email laporan: alarm <kode> gagal
 dikirim`, `email laporan: alarm tidak dikirim, token atau ADMIN_TELEGRAM_ID kosong`, `email laporan: alarm tidak terkirim ke
-Telegram (<jenis galat>)`, `pemeriksaan alarm email laporan gagal …`), `email laporan: tanda hidup worker tidak terbaca dari
+Telegram (<jenis galat>)`, `pemeriksaan alarm email laporan gagal …`, `pemeriksaan alarm email laporan melewati batas
+waktu; dicoba lagi jam berikutnya`), `email laporan: tanda hidup worker tidak terbaca dari
 Redis` (kartu Admin atau alarm tidak bisa membaca Redis), dan email verifikasi (`Email verifikasi terkirim` / `Email
 verifikasi gagal dikirim (<jenis galat>)`, `Tautan verifikasi email user <id> gagal dikirim`; `grep -i verifikasi`). Proses
 API tidak mengatur logging, jadi hanya WARNING dan ERROR yang sampai ke journal `jatahku`: baris INFO job (durasi
@@ -415,8 +434,9 @@ memuat → teks galat di kartu saja; bagian Admin lain tetap tampil. Respons end
 pengaturan = menyala), `ambang_penerima` (300), `smtp_lokal`, `laju_per_detik`, `alarm` (daftar kode). Hanya angka, waktu,
 dan kode; tanpa alamat dan tanpa id user. Redis mati → tetap 200 dengan `worker_hidup` false.
 
-**Alarm** (`pantau_email.periksa_alarm`, dipanggil `laporan_job` tiap jam di menit :30, jadi jeda deteksi sampai ±1 jam;
-dikirim lewat Telegram bot ke `ADMIN_TELEGRAM_ID`, teks polos):
+**Alarm** (`pantau_email.periksa_alarm`, dipanggil `laporan_job` tiap jam di menit :30 dengan batas waktu 60 detik
+(`job.BATAS_WAKTU_ALARM`), jadi jeda deteksi sampai ±1 jam; dikirim lewat Telegram bot ke `ADMIN_TELEGRAM_ID`, teks
+polos):
 
 | Kode | Syarat | Ulang paling cepat | Teks |
 |---|---|---|---|
@@ -425,6 +445,11 @@ dikirim lewat Telegram bot ke `ADMIN_TELEGRAM_ID`, teks polos):
 | `antrean_tersendat` | umur laporan `menunggu` tertua > 360 menit | 24 jam | `⚠️ Antrean email laporan tersendat: N menunggu, tertua X jam. Cek: sudo journalctl -u jatahku-worker -n 50` |
 | `email_gagal` | ada laporan `gagal` yang `email_terakhir_at`-nya sesudah alarm ini terakhir terkirim (pertama kali: 24 jam terakhir) | 24 jam | `⚠️ Ada email laporan yang gagal dikirim (N dalam 7 hari). Periksa SMTP, lalu ikuti "kirim ulang email" di docs/laporan-berkala.md.` |
 
+- **Per kejadian** (`pantau_email.PER_KEJADIAN`): untuk `worker_mati`, `antrean_tersendat`, dan `pindah_penyedia`,
+  pemeriksaan yang mendapati syaratnya tidak berlaku menghapus baris `alarm_email_laporan:<kode>`, jadi kejadian
+  berikutnya dialarmkan seketika (worker pulih lalu mati lagi 5 jam kemudian → alarm baru). Selama satu kejadian
+  berlanjut, batas ulang di tabel tetap. `email_gagal` tidak pernah dihapus (barisnya juga batas "gagal baru"). Masa
+  tenang tidak menghapus apa pun (syaratnya tetap berlaku).
 - **Masa tenang:** `worker_mati` tidak dikirim dalam 15 menit pertama sesudah proses API menyala (`pantau_email.API_MENYALA`, diisi
   `lifespan`), karena worker ikut di-restart saat deploy. Alarm lain tidak punya masa tenang. `API_MENYALA` kosong (jalan
   manual dari shell) = tanpa masa tenang.
@@ -547,6 +572,11 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   diverifikasi lagi.
 - **Alarm email paling cepat terdeteksi tiap jam** (diperiksa `laporan_job` di menit :30), dan hanya sampai bila Telegram
   admin diatur; selainnya kartu Admin. Antrean tidak tahu email yang ditolak sesudah diterima server SMTP (bounce).
+  `antrean_tersendat` bisa berbunyi keliru bila laporan lama dihidupkan lagi atau diatur ulang (kirim ulang manual) dalam
+  semenit sebelum pemeriksaan tiap jam (umurnya dihitung dari `terbit_at`). `email_gagal` bisa melewatkan kegagalan yang
+  klaimnya dimulai sebelum waktu alarm terakhir tetapi baru menjadi `gagal` sesudahnya (`email_terakhir_at` = waktu klaim);
+  kartu Admin (`gagal_7_hari`) tetap menghitungnya. Proses API tidak mengatur logging, jadi journal `jatahku` hanya
+  memuat WARNING ke atas (baris INFO job tidak tampil).
 - **Pesan `?email_verifikasi=` bisa hilang:** pesannya ditampilkan sekali. Reload ambil-alih service worker (aplikasi
   memuat ulang saat `controllerchange`) atau browser yang sedang logout (dialihkan ke login) dapat menghilangkannya;
   verifikasinya sendiri sudah berhasil, dan baris status di kartu ("Email … terverifikasi.") menunjukkan hasilnya.
@@ -619,9 +649,17 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   ```
   Unit hilang (`Unit jatahku-worker.service not found`): jalankan deploy (`sudo /opt/jatahku/deploy.sh`, atau jalankan ulang
   workflow "Deploy Jatahku"), yang memasangnya dari `deploy/jatahku-worker.service`. Worker restart terus (`NRestarts`
-  bertambah: `systemctl show -p NRestarts --value jatahku-worker`): lihat traceback di journal; sebab umum `.env` salah, database
-  atau Redis tidak terjangkau. Kartu Admin hanya menampilkan "Hidup" bila tanda hidup di Redis ≤ 10 menit, jadi Redis
-  mati membuatnya tampak mati walau worker mengirim (peringatan di journal worker).
+  bertambah: `systemctl show -p NRestarts --value jatahku-worker`): proses mati saat menyala, karena impor atau
+  konfigurasi salah (`.env`); lihat traceback di journal. Database atau Redis yang tidak terjangkau **tidak** membuat
+  worker restart: journal menampilkan `putaran email laporan gagal …` tiap menit dan tanda hidup berhenti (database), atau
+  peringatan tanda hidup (Redis). Kartu Admin hanya menampilkan "Hidup" bila tanda hidup di Redis ≤ 10 menit, jadi Redis
+  mati membuatnya tampak mati walau worker mengirim, dan database mati membuatnya tampak mati walau prosesnya berjalan.
+- **Pemutus berbunyi** (journal worker: `email laporan: 5 kiriman berturut-turut gagal; worker jeda 5 menit`): SMTP atau
+  penyedia menolak. Worker mencoba lagi sendiri tiap 5 menit; tiap kali paling banyak lima laporan kehilangan satu
+  percobaan. Penyedia yang menolak karena kuota membuat worker berjeda 5 menit berulang-ulang, bukan menggagalkan seluruh
+  antrean: turunkan `EMAIL_LAPORAN_PER_DETIK` di bawah kuota (terendah 0,1/detik = 360 per jam) dan restart
+  `jatahku-worker jatahku`. Perbaiki SMTP (`SMTP_*` di `.env`, lalu restart keduanya); laporan yang sempat menjadi `gagal`
+  selama gangguan dikirim ulang massal (butir berikut).
 - **Menjalankan job manual** (mis. scheduler tidak berjalan): dari shell di VPS, **jauh dari menit :30** (job terjadwal),
   jauh dari 00:05 (job snapshot), dan tidak selagi tanggal gajian diubah. `household_lock` hanya berlaku di dalam satu
   proses, jadi proses shell tidak diserialkan dengan penulis snapshot di proses API. Laporan dobel tetap tidak mungkin
@@ -652,7 +690,13 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   ```bash
   sudo -u postgres psql jatahku_db -c "UPDATE reports SET email_status='menunggu', email_alasan=NULL, email_percobaan=0, email_terakhir_at=NULL WHERE id='<id laporan>' AND email_status IN ('gagal','dilewati')"
   ```
-  Worker mengambilnya dalam ±1 menit (jeda antar putaran 60 detik) dan mengirimnya dengan tiga percobaan baru, pada laju
+  **Massal**, untuk laporan yang menjadi `gagal` selama satu gangguan (ganti jendela waktunya, dalam UTC, dengan awal
+  dan akhir gangguan; `terkirim` dan `mengirim` tidak pernah tersentuh):
+  ```bash
+  sudo -u postgres psql jatahku_db -c "SELECT count(*) FROM reports WHERE email_status='gagal' AND email_terakhir_at BETWEEN '<awal UTC>' AND '<akhir UTC>'"
+  sudo -u postgres psql jatahku_db -c "UPDATE reports SET email_status='menunggu', email_alasan=NULL, email_percobaan=0, email_terakhir_at=NULL WHERE email_status='gagal' AND email_terakhir_at BETWEEN '<awal UTC>' AND '<akhir UTC>'"
+  ```
+  Jumlah yang diubah harus sama dengan hitungan sebelumnya. Worker mengambilnya dalam ±1 menit (jeda antar putaran 60 detik) dan mengirimnya dengan tiga percobaan baru, pada laju
   worker; tidak perlu menjalankan `proses_antrean_email` manual (antrean tidak punya batas umur terbit). Lihat hasilnya:
   `SELECT email_status, email_alasan, email_percobaan FROM reports WHERE id='<id laporan>'` → `terkirim`. Syaratnya masih berlaku saat dikirim: user punya email **terverifikasi** dan `email_on`; bila
   tidak, laporan menjadi `dilewati` lagi dengan alasannya. Jangan menyentuh `mengirim` (sedang berjalan; klaim basi > 30
@@ -692,12 +736,17 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   halaman bertoken lewat `app.main`), `test_laporan_job` (status awal; antrean dalam job sebelum worker), `test_email_smtp_config`
   (`SMTP_TIMEOUT`), dan `test_google_auth`.
 - Worker email laporan (12 Nov 2026): `test_laporan_antrean_email` (`putaran_antrean`: `KELOMPOK`, berhenti sebelum dan
-  sesudah pacu, `penuh`), `test_laporan_worker_email` (laju dan `laju_dari_pengaturan`, pacu, tanda hidup dan TTL, jeda
-  kosong yang terputus berhenti, Redis mati, galat putaran, log tanpa alamat), `test_laporan_pantau_email` (`keadaan_email`,
-  tiap alarm, batas ulang, pencatatan hanya bila terkirim, masa tenang, pesan tanpa `@`), `test_kotak_worker` (`LifespanTests`: `lifespan` mengisi `API_MENYALA` dengan waktu UTC berzona dan mengembalikannya), `test_laporan_job` (job tanpa email,
-  `BATAS_JALAN`, hasil `{terbit, gagal, ditunda}`, galat alarm tidak mengubah hasil), `test_admin_email_laporan` (hanya
+  sesudah pacu, `penuh`, `sesudah_laporan` sekali per hasil), `test_laporan_worker_email` (laju dan
+  `laju_dari_pengaturan` termasuk koma desimal, pacu, tanda hidup dan TTL, tanda hidup tidak ditulis sesudah putaran galat,
+  pemutus gagal beruntun, jeda kosong yang terputus berhenti, Redis mati, galat putaran, log tanpa alamat, log pihak
+  ketiga tidak di bawah WARNING; komposisi `jalankan` + `putaran_antrean` di SQLite: berhenti di tengah kiriman, dua worker
+  atas 40 laporan masing-masing terkirim sekali, laporan keenam tidak diklaim saat pemutus), `test_laporan_pantau_email`
+  (`keadaan_email`, awalan nonaktif tanpa wildcard LIKE, tiap alarm, batas ulang, alarm per kejadian, pencatatan hanya bila
+  terkirim, masa tenang, pesan tanpa `@`), `test_kotak_worker` (`LifespanTests`: `lifespan` mengisi `API_MENYALA` dengan waktu UTC berzona dan mengembalikannya), `test_laporan_job` (job tanpa email,
+  `BATAS_JALAN`, hasil `{terbit, gagal, ditunda}`, galat atau habis waktu alarm tidak mengubah hasil), `test_admin_email_laporan` (hanya
   admin, angka, tanpa alamat dan id user, Redis mati), `test_deploy_worker` (perilaku blok worker di `deploy.sh`: unit
-  dipasang bila berbeda atau belum di-enable, penghitung `NRestarts`, deploy gagal bila worker tidak stabil). Frontend:
+  dipasang bila berbeda atau belum di-enable, penghitung `NRestarts` dibaca sebelum dan sesudah tunggu, deploy gagal bila
+  worker tidak stabil, pohon tanpa unit menghentikan dan melepas worker tanpa menggagalkan deploy). Frontend:
   `emailLaporanView.test.js`. Uji beban lokal (skrip sementara, tidak di repo): hasilnya di PR worker.
 - Log tanpa token dan alamat (11 Nov 2026): `test_log_akses` (penyamaran query; filter terpasang di `uvicorn.access`
   sesudah `app.main` diimpor), `test_log_tanpa_alamat` (semua pengirim `email_service` dan email notifikasi, sukses dan

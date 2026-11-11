@@ -49,8 +49,8 @@ pindah ke penyedia email transaksional (hanya alarm dan runbook-nya); tahap 3 la
    kiriman sebelumnya, jadi kiriman lambat tidak menambah jeda).
 3. Kelompok penuh → langsung putaran berikutnya. Kelompok tidak penuh → tunggu `JEDA_KOSONG` = 60 detik (terputus
    seketika oleh permintaan berhenti).
-4. Tulis tanda hidup ke Redis: kunci `laporan:worker_email:hidup`, nilai waktu UTC ISO, TTL 15 menit; ditulis di awal
-   setiap putaran dan paling sedikit tiap 60 detik selama mengirim. Redis tidak terjangkau → dicatat sekali per putaran,
+4. Tulis tanda hidup ke Redis: kunci `laporan:worker_email:hidup`, nilai waktu UTC ISO, TTL 2 jam (semula 15 menit;
+   F-5 di "Penyesuaian saat eksekusi"); ditulis di awal setiap putaran dan paling sedikit tiap 60 detik selama mengirim. Redis tidak terjangkau → dicatat sekali per putaran,
    pengiriman tetap jalan.
 
 **Pengaturan** (`app/core/config.py`): `EMAIL_LAPORAN_PER_DETIK: float = 3.0`. Nilai di luar 0,1–20 → dipakai batas
@@ -216,3 +216,19 @@ berlaku. Perilaku final: `docs/laporan-berkala.md` (bagian "Email laporan", "Pem
   terakhir terkirim; bila belum pernah terkirim, dalam 24 jam terakhir. N di pesan = `gagal_7_hari`. Telegram admin tidak
   diatur atau gagal → WARNING (`email laporan: alarm tidak dikirim, token atau ADMIN_TELEGRAM_ID kosong` atau `… tidak
   terkirim ke Telegram (<jenis galat>)`; kodenya tidak ikut dicatat), waktu tidak ditulis, dicoba lagi jam berikutnya.
+- **Gelombang perbaikan akhir (review seluruh branch, F-1…F-9):**
+  - **F-1 log worker:** akar WARNING, logger `jatahku` INFO (`worker_email.pasang_log`), supaya fontTools (±70 baris INFO
+    per PDF) tidak membanjiri journal `jatahku-worker`.
+  - **F-2 deploy revert:** pohon tanpa `deploy/jatahku-worker.service` → `deploy.sh` mencetak peringatan, `disable --now`,
+    menghapus unit terpasang, `daemon-reload`, tanpa `WORKER_GAGAL`; rollback tidak lagi butuh langkah manual.
+  - **F-3 alarm per kejadian:** `worker_mati`, `antrean_tersendat`, `pindah_penyedia` kehilangan catatan `app_settings`-nya
+    saat syaratnya tidak berlaku, jadi kejadian berikutnya langsung dialarmkan; `email_gagal` tetap.
+  - **F-4 pemutus:** `putaran_antrean(sesudah_laporan=…)`; 5 hasil `gagal`/`dicoba_lagi`/galat beruntun (`terkirim` mereset,
+    `dilewati` tidak) → putaran berhenti mengklaim, WARNING, jeda 300 detik (terputus oleh berhenti), lalu lanjut.
+  - **F-5 tanda hidup = putaran terakhir berjalan:** tidak ditulis di awal putaran yang menyusul putaran galat (ditulis
+    begitu putaran itu selesai); `TTL_HIDUP` = 7200 detik (semula 900). Alarm bisa menyebut "sejak HH:MM WIB" sampai dua jam
+    sesudah putaran baik terakhir; worker yang tidak mencapai database tampil tidak hidup. Hidup tetap ≤ 10 menit.
+  - **F-6 koma desimal:** `laju_dari_pengaturan("0,5")` = 0,5 (satu koma sebagai pemisah desimal).
+  - **F-7 alarm berbatas waktu:** `laporan_job` menjalankan pemeriksaan alarm di bawah `asyncio.wait_for(…, 60)`
+    (`job.BATAS_WAKTU_ALARM`); habis waktu dicatat ERROR dengan teks tetap, hasil job tidak berubah, Redis tetap ditutup.
+  - **F-8 unit:** `NoNewPrivileges=true`.
