@@ -1,19 +1,21 @@
 {
   "id": "buku_usaha",
   "name": "Buku Usaha",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "Jatahku",
   "description": "Pembukuan ringan untuk ruang usaha: kontak pelanggan dan pemasok, jenis pemasukan, alokasi omzet, laba rugi, dan kartu usaha di Beranda.",
   "icon": "book",
   "category": "usaha",
   "engines": {
-    "plugin_api": ">=1.3 <2.0"
+    "plugin_api": ">=1.4 <2.0"
   },
   "space_types": [
     "usaha"
   ],
   "permissions": [
     "envelopes:read",
+    "transactions:read",
+    "incomes:read",
     "incomes:write"
   ],
   "entities": [
@@ -98,6 +100,14 @@
       {
         "method": "POST",
         "path": "/penjualan"
+      },
+      {
+        "method": "GET",
+        "path": "/laba-rugi"
+      },
+      {
+        "method": "GET",
+        "path": "/laporan"
       }
     ]
   },

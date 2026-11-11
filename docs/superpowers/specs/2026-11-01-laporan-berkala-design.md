@@ -154,6 +154,13 @@ dan desain teman), tetap **tanpa nominal** (6b). Rincian teks persis: `docs/lapo
 - **`email_template`:** tombol kini `div` di sel isi (sebelumnya `<tr>` yang tersasar di dalam `<td>`, sehingga parser
   HTML memindahkannya ke luar sel), ditambah `penutup_html` (di bawah tombol) dan `hak_cipta` (baris terakhir kaki).
   Berlaku untuk semua email; isi email lain tidak berubah.
+- **Bentuk token verifikasi (11 Nov 2026, review akhir tahap 2):** token tidak lagi memuat alamat. Klaim `email` diganti
+  `eh` = HMAC-SHA256 dari alamat yang dinormalkan, berkunci turunan `JWT_SECRET` dengan pemisah domain
+  `verifikasi-email/v1` (tanpa kunci `.env` baru); badan JWT hanya base64url dan token ada di URL dan log. Alamat yang
+  diverifikasi dan ditampilkan halaman konfirmasi dibaca dari database dan dicocokkan dengan sidiknya
+  (`hmac.compare_digest`). Hasil `berubah`/`tidak_berlaku` dan aturan GET-tidak-menulis tetap. Token bentuk lama ditolak
+  sebagai `tidak_berlaku` (masa berlakunya 24 jam; user mengirim tautan baru). Bersamaan: access log uvicorn menyamarkan
+  `?token=`, dan log email tanpa alamat. Rincian: `docs/laporan-berkala.md` bagian "Email laporan" dan "Keamanan".
 
 ## 1. Tujuan dan keputusan
 

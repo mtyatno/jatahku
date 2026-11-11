@@ -174,6 +174,18 @@ class ApiClient {
       return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
     }
   }
+  // Berkas dari endpoint plugin (U3: laporan PDF/CSV Buku Usaha): ruang dari header, nama berkas dari server,
+  // disimpan lewat lapisan native (bukan dibuka di tab aplikasi). Mengembalikan { ok, status, data }.
+  async unduhPluginRute(pluginId, path, cadangan) {
+    try {
+      const res = await this.request(`/p/${pluginId}${path}`);
+      if (!res.ok) return { ok: false, status: res.status, data: await res.json().catch(() => ({})) };
+      await native.files.save(await res.blob(), namaBerkasUnduhan(res.headers.get('content-disposition'), cadangan));
+      return { ok: true, status: res.status, data: null };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
   kartuBeranda() { return this.ruangKirim('/dashboard/cards'); }
   simpanTataLetak(body) { return this.ruangKirim('/dashboard/layout', 'PUT', body); }
 

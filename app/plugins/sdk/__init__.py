@@ -16,20 +16,23 @@ Titik ekstensi server dan bentuknya:
 | `plugin.perintah_bot(cmd)` | `async (ctx) -> str` | Telegram dan chat web, hanya baca |
 | `plugin.job(key)` | `async (ctx) -> None`, idempoten | scheduler tiap jam |
 | `plugin.field_form(target, key)` | `async (ctx, nilai) -> nilai` | `titik.periksa_field` (disambungkan ke form di U2) |
-| `plugin.rute(metode, pola)` | `async (ctx, Permintaan) -> data atau Jawaban` | `/p/<id>/<pola>` (U1; owner/admin, plugin aktif) |
+| `plugin.rute(metode, pola)` | `async (ctx, Permintaan) -> data, Jawaban, atau Laporan (GET)` | `/p/<id>/<pola>` (U1; owner/admin, plugin aktif) |
 
 `ctx.notify(...)` mengirim notifikasi dari job (`notifications:send`); kamus Catat cepat (`nlp_kamus`) cukup data di
 manifest. `ctx.data("<entitas>")` (U1) membaca dan menulis tabel plugin sendiri (`entities` manifest) di ruang konteks;
 tulis hanya dari `rute` non-GET. Galat dari `rute`: `GalatRute(status, kode, detail)` atau `NilaiTidakSah` (422).
+U3: angka dari `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` (agregat di database, tidak terpotong); `rute` GET boleh
+mengembalikan `Laporan` yang digambar host menjadi PDF atau CSV.
 """
 from app.plugins.sdk.context import (
-    AksiRoute, AmplopView, AnggotaView, DataPlugin, GalatRute, IzinDitolak, Jawaban, NilaiTidakSah, PemasukanView,
-    PenggunaView, PeriodeView, Permintaan, PluginContext, RencanaPengeluaran, Saran, TransaksiView,
+    AksiRoute, AmplopView, AnggotaView, DataPlugin, GalatRute, IzinDitolak, Jawaban, Laporan, NilaiTidakSah,
+    PemasukanView, PenggunaView, PeriodeView, Permintaan, PluginContext, RencanaPengeluaran, RingkasanView, Saran,
+    TabelLaporan, TransaksiView,
 )
 from app.plugins.sdk.plugin import Plugin
 
 __all__ = [
-    "AksiRoute", "AmplopView", "AnggotaView", "DataPlugin", "GalatRute", "IzinDitolak", "Jawaban", "NilaiTidakSah",
-    "PemasukanView", "PenggunaView", "PeriodeView", "Permintaan", "Plugin", "PluginContext", "RencanaPengeluaran",
-    "Saran", "TransaksiView",
+    "AksiRoute", "AmplopView", "AnggotaView", "DataPlugin", "GalatRute", "IzinDitolak", "Jawaban", "Laporan",
+    "NilaiTidakSah", "PemasukanView", "PenggunaView", "PeriodeView", "Permintaan", "Plugin", "PluginContext",
+    "RencanaPengeluaran", "RingkasanView", "Saran", "TabelLaporan", "TransaksiView",
 ]

@@ -296,6 +296,21 @@ async def rute_plugin(
         await setelah_commit.batal(db)       # mis. lepas kunci `client_ref` (review #201 T5)
         raise
     await setelah_commit.jalankan(db)
+    if hasil.berkas is not None:
+        return await _kirim_berkas(db, hid, plugin_id, user, path, hasil.berkas)
     if hasil.status == 204:
         return Response(status_code=204)
     return JSONResponse(status_code=hasil.status, content=hasil.data)
+
+
+async def _kirim_berkas(db: AsyncSession, hid, plugin_id: str, user: User, path: str, b) -> Response:
+    """Laporan plugin (U3) sebagai lampiran: nama dari host, tidak pernah ditampilkan di origin aplikasi (nosniff,
+    CSP sandbox), tidak disimpan cache. Setiap unduhan diaudit tanpa angka."""
+    siklus._audit(db, hid, plugin_id, user.id, "laporan", format=b.format, rute=("/" + path)[:80])
+    await db.commit()
+    return Response(b.isi, media_type=b.media, headers={
+        "Content-Disposition": f'attachment; filename="{b.nama}"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })

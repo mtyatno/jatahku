@@ -39,12 +39,22 @@ def check_configured() -> bool:
     return False
 
 
+class SmtpPasswordKosong(RuntimeError):
+    """SMTP_PASSWORD belum diisi di .env. Pesannya teks tetap (tanpa alamat), jadi boleh dicatat utuh."""
+
+
+def _alasan_gagal(e: Exception) -> str:
+    """Keterangan galat kiriman yang aman dicatat. Pesan galat SMTP bisa memuat alamat penerima
+    (`550 <alamat> ditolak`), jadi hanya nama jenis galatnya; kecuali `SmtpPasswordKosong`, yang pesannya teks tetap."""
+    return str(e) if isinstance(e, SmtpPasswordKosong) else type(e).__name__
+
+
 def _deliver(to_email: str, msg) -> None:
     """Kirim lewat SMTP terautentikasi. Kredensial dari .env (SMTP_*, app/core/config.py);
     tanpa SMTP_PASSWORD tidak pernah menyambung ke server."""
     s = get_settings()
     if not s.SMTP_PASSWORD:
-        raise RuntimeError("SMTP_PASSWORD kosong di .env, email tidak dikirim")
+        raise SmtpPasswordKosong("SMTP_PASSWORD kosong di .env, email tidak dikirim")
     with smtplib.SMTP(s.SMTP_HOST, s.SMTP_PORT, timeout=SMTP_TIMEOUT) as server:
         server.ehlo()
         server.starttls()
@@ -53,7 +63,8 @@ def _deliver(to_email: str, msg) -> None:
 
 
 def send_email(to_email: str, subject: str, html_body: str, text_body: str = None):
-    """Send email via authenticated SMTP (exim4)."""
+    """Send email via authenticated SMTP (exim4). Log tanpa alamat, subjek (memuat nama dan nominal), atau pesan
+    galat SMTP: hanya teks tetap dan `_alasan_gagal`."""
     try:
         msg = MIMEMultipart("alternative")
         msg["From"] = _from_header()
@@ -71,17 +82,17 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
 
         _deliver(to_email, msg)
 
-        logger.info(f"Email sent to {to_email}: {subject}")
+        logger.info("Email terkirim")
         return True
     except Exception as e:
-        logger.error(f"Email failed to {to_email}: {e}")
+        logger.error("Email gagal dikirim (%s)", _alasan_gagal(e))
         return False
 
 
 def send_verifikasi_email(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
-    """Kirim email verifikasi alamat. Terpisah dari `send_email` karena log di sana memuat alamat tujuan; di sini log
-    hanya teks tetap dan nama jenis galat (pesan galat SMTP bisa memuat alamat). Tanpa header List-Unsubscribe:
-    email transaksional satu kali. Tidak pernah melempar; False bila gagal."""
+    """Kirim email verifikasi alamat. Terpisah dari `send_email` karena tanpa header List-Unsubscribe: email
+    transaksional satu kali. Log hanya teks tetap dan `_alasan_gagal` (pesan galat SMTP bisa memuat alamat). Tidak
+    pernah melempar; False bila gagal."""
     try:
         msg = MIMEMultipart("alternative")
         msg["From"] = _from_header()
@@ -95,7 +106,7 @@ def send_verifikasi_email(to_email: str, subject: str, html_body: str, text_body
         logger.info("Email verifikasi terkirim")
         return True
     except Exception as e:
-        logger.error("Email verifikasi gagal dikirim (%s)", type(e).__name__)
+        logger.error("Email verifikasi gagal dikirim (%s)", _alasan_gagal(e))
         return False
 
 
@@ -211,7 +222,7 @@ def send_subscription_due_email(to_email: str, name: str, desc: str, amount: str
 
 
 def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) -> bool:
-    """Send backup JSON as attachment before a data reset."""
+    """Send backup JSON as attachment before a data reset. Log tanpa alamat atau pesan galat SMTP."""
     try:
         msg = MIMEMultipart("mixed")
         msg["From"] = _from_header()
@@ -239,10 +250,10 @@ def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) 
 
         _deliver(to_email, msg)
 
-        logger.info(f"Backup email sent to {to_email}: {filename}")
+        logger.info("Email backup terkirim")
         return True
     except Exception as e:
-        logger.error(f"Backup email failed to {to_email}: {e}")
+        logger.error("Email backup gagal dikirim (%s)", _alasan_gagal(e))
         return False
 
 
@@ -330,5 +341,5 @@ def send_laporan_email(to_email: str, subject: str, html_body: str, text_body: s
         logger.info("Email laporan terkirim")
         return True
     except Exception as e:
-        logger.error("Email laporan gagal dikirim (%s)", type(e).__name__)
+        logger.error("Email laporan gagal dikirim (%s)", _alasan_gagal(e))
         return False

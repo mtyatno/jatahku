@@ -1,6 +1,6 @@
 // Halaman Buku Usaha `/p/buku_usaha/*` (Plugin U1; 05-desain-buku-usaha.md artboard "Halaman Buku Usaha").
 //
-// Tab Kontak (U1, pelanggan dan pemasok) dan Alokasi omzet (U2, `TabAlokasi.jsx`). Laba rugi (U3) menyusul.
+// Tab Kontak (U1, pelanggan dan pemasok), Alokasi omzet (U2, `TabAlokasi.jsx`), dan Laba rugi (U3, `TabLabaRugi.jsx`).
 // Semua data dari `/p/buku_usaha/*` (ruang dari header, server memeriksa peran dan status plugin); di sini tampilan,
 // saringan lokal, dan validasi yang sama dengan server sebelum mengirim (`bukuUsaha.js`).
 import { useCallback, useEffect, useState } from 'react';
@@ -8,6 +8,7 @@ import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Icon } from '../../components/Icon';
 import TabAlokasi from './TabAlokasi';
+import TabLabaRugi from './TabLabaRugi';
 import {
   MAKS_CATATAN, MAKS_NAMA, PERAN_KONTAK, PLUGIN_ID, bodyUbahKontak, hitungKontak, pesanKontakGalat, rapikanKontak,
   saringKontak, urutkanKontak, validasiKontak,
@@ -16,7 +17,7 @@ import {
 const TAB = [
   { id: 'kontak', label: 'Kontak' },
   { id: 'alokasi', label: 'Alokasi omzet' },
-  { id: 'laba-rugi', label: 'Laba rugi', nanti: 'U3' },
+  { id: 'laba-rugi', label: 'Laba rugi' },
 ];
 const KOSONG = { nama: '', peran: 'pelanggan', telepon: '', catatan: '' };
 
@@ -235,19 +236,6 @@ function TabKontak({ ruangNama }) {
   );
 }
 
-function TabNanti({ tab }) {
-  return (
-    <section className="card !px-5 !py-8 text-center" role="status">
-      <span className="inline-flex w-12 h-12 rounded-2xl items-center justify-center mb-3"
-        style={{ background: 'rgba(148,163,184,0.14)', color: 'var(--text-muted)' }}>
-        <Icon name="book" size={24} />
-      </span>
-      <h2 className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>{tab.label} menyusul</h2>
-      <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Bagian ini datang di pembaruan Buku Usaha berikutnya.</p>
-    </section>
-  );
-}
-
 export default function Halaman({ subpath = '', plugin }) {
   const { ruang } = useOutletContext() || {};
   const ruangNama = ruang?.aktif?.nama || 'ruang ini';
@@ -272,12 +260,13 @@ export default function Halaman({ subpath = '', plugin }) {
             style={aktif.id === t.id
               ? { background: 'color-mix(in srgb, var(--brand-400) 18%, transparent)', color: 'var(--text)' }
               : { color: 'var(--text-muted)' }}>
-            {t.label}{t.nanti ? ' ·' : ''}
+            {t.label}
           </Link>
         ))}
       </nav>
       {aktif.id === 'kontak' ? <TabKontak ruangNama={ruangNama} />
-        : aktif.id === 'alokasi' ? <TabAlokasi ruangNama={ruangNama} /> : <TabNanti tab={aktif} />}
+        : aktif.id === 'alokasi' ? <TabAlokasi ruangNama={ruangNama} />
+          : <TabLabaRugi key={ruang?.aktif?.id || 'ruang'} ruangNama={ruangNama} />}
     </div>
   );
 }

@@ -19,7 +19,41 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 **Cara melanjutkan**
 - Sesi review baru: "review PR #205 terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`.
-- Bila PR U3 (#204) di-merge lebih dulu, SESI-LOG bentrok di bagian atas: gabungkan `main`, simpan kedua entri.
+- U3 (#204) di-merge lebih dulu (11 Nov); bentrok SESI-LOG diselesaikan dengan menggabungkan `main`, kedua entri disimpan.
+
+---
+
+## U3 · Laba rugi dan laporan · 2026-11-10 · pemilik produk + Claude
+
+**Selesai** (branch `plugin/u3-laba-rugi`; PR #204; tanpa migrasi; Plugin API 1.4; manifest Buku Usaha 0.3.0)
+- Keputusan pembuka (disetujui "lanjut"): A periode = bulan kalender; B baca agregat di SDK; C aturan angka (lihat di bawah); D laporan dibuat saat diminta, bukan job 202; E isi laporan (ringkasan, beban per akun, daftar penjualan dan pengeluaran), PDF tanpa kata sandi; F karyawan 403 `khusus_admin`.
+- **Host/SDK:** `host/ringkas.py`: `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` menjumlah di database (kelompok `bulan`, `amplop`, `jenis`, atau `<entitas pendamping>.<kolom>`; > 1.000 kelompok = `ValueError`, tidak memotong); kelompok pendamping transaksi privat milik orang lain = `None`. `ctx.transactions(pendamping=, hanya_bersama=)` / `ctx.incomes(pendamping=)` memberi `meta`. `host/berkas.py`: rute GET boleh mengembalikan `Laporan`; host menggambar PDF (fpdf2, font laporan berkala, semafor bersama) atau CSV (`_csv_text` PR #136), memeriksa bentuk dan batas, mengirim lampiran (nosniff, CSP sandbox, no-store) dan mengaudit `laporan` tanpa angka.
+- **Buku Usaha:** `metrics.py` satu sumber angka (omzet = penjualan + pemasukan tanpa jenis; beban per akun dengan "Belum berakun" terakhir; laba, margin, banding bulan lalu, perubahan; prive/modal/pinjaman/lain di luar laba rugi; prive = −alokasi); `teks.py` templat dan format; `laporan.py` isi `Laporan`; rute `GET /laba-rugi` dan `GET /laporan`; izin baru `transactions:read`, `incomes:read`.
+- **Web:** tab Laba rugi (`TabLabaRugi.jsx`): pemilih 12 bulan, Omzet/Beban/Laba dengan perubahan dari bulan lalu (beban naik = merah), beban per akun dengan bilah porsi, catatan pemasukan tanpa jenis, "Di luar laba rugi", unduh PDF/CSV lewat `api.unduhPluginRute`. `rupiah` kini "-RpX" untuk rugi.
+- Tes: unittest 3676 lulus (+21 di `test_plugin_u3.py`; tes DB U3 juga dijalankan terhadap PostgreSQL 16 lokal dan lulus); node --test 744 (`src/lib`) + 17 (`buku_usaha`) lulus; build ok; validator OK; `openapi_cek` tanpa perubahan memutus. Uji mutasi: tanpa samaran kelompok privat, tanpa filter `deleted_at` pendamping, `hanya_bersama` diabaikan, tanpa `_csv_text`, dan `meta` privat tidak disamarkan, semuanya ditangkap tes.
+- Diperiksa di browser (stack lokal, data Dapur Nusa Okt/Sep/Nov): 1440 px terang dan 390 px gelap tanpa gulir samping, unduh PDF dan CSV dengan nama `jatahku-buku-usaha-laba-rugi-2026-10.*`, akun karyawan tidak melihat tab, konsol bersih. PDF dirender ke gambar dan diperiksa (3 halaman, kolom angka rata kanan).
+
+**Keputusan kecil**
+- Disetujui pemilik 11 Nov: berkas digambar host, bukan plugin (kode plugin tidak boleh mengimpor fpdf2/csv), dan `top-up` tanpa jenis ikut omzet tanpa jenis seperti `pemasukan` (top-up dari web tersimpan sebagai `pemasukan`, #160).
+- Pemasukan `kind` transfer dan penyesuaian tidak dihitung. Meta pendamping yang terhapus dianggap tidak ada (tanpa jenis/akun).
+- PDF: kolom berisi persen rata kanan; sel kosong baris total dibiarkan kosong; CSV baris kedua `Ruang,<nama>`.
+- Kontrak `/laporan` 202 + `job_id` (v0) diturunkan ke lampiran langsung (keputusan D); dicatat di 04-kontrak-api.md §6.
+
+**Digantung**
+- **Keputusan C dan keputusan privat, diputuskan pemilik 11 Nov:** pilihan privat dimatikan di ruang usaha (pengeluaran usaha harus terbuka bagi pemilik dan admin), sebagai PR kecil terpisah sesudah U3. Untuk transaksi privat yang sudah ada, U3 tetap memakai A: nominal ikut beban di "Belum berakun", tanpa akun/keterangan. Latar: pilihan privat sekarang juga tampil di ruang usaha (`shouldShowPrivateToggle` hanya memeriksa jumlah anggota dan amplop bersama, tidak jenis ruang).
+- Review keamanan terpisah disarankan (sesi tidak bertanda review, tetapi menambah jalur baca data dan keluaran berkas untuk plugin); belum dijalankan.
+
+**Jebakan**
+- Laporan dihitung saat diminta, tidak beku: penjualan yang dicatat mundur (sampai 366 hari, catatan review #202) mengubah laporan bulan lalu. Wajar untuk v1; laporan beku per bulan bisa menyusul bila dibutuhkan.
+- Instalasi lama perlu "Setujui izin baru" di Fitur Tambahan; sebelum itu `/laba-rugi` dan `/laporan` 403 `tanpa_izin` (tab menautkan ke Fitur Tambahan).
+- `test_plugin_u3.py` memakai penyiapan `U2DbTests` lewat modul (`u2.U2DbTests`), bukan impor kelas; impor kelas langsung membuat unittest menjalankan ulang semua tes U2.
+- Validator kode plugin menolak `.format(...)` dan `compile` (termasuk `re.compile`); `teks.t` mengisi templat dengan `re.sub`, periode memakai `re.fullmatch`.
+
+**Cara melanjutkan**
+- Sesudah U3: PR kecil "privat dimatikan di ruang usaha" (keputusan privat 11 Nov).
+- Opsional: "review PR #204 terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
+- Merge tanpa migrasi; `/cek-deploy <PR>`. Sesudah tayang: setujui izin baru Buku Usaha, buka tab Laba rugi, unduh PDF/CSV satu bulan, coba dengan akun karyawan (403).
+- Berikutnya `/sesi-plugin U4` (kartu Beranda, butuh U3 + B3) atau `/sesi-plugin U5`.
 
 ---
 

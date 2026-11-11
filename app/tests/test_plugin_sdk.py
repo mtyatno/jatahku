@@ -346,7 +346,7 @@ class ManifestH2Tests(unittest.TestCase):
         self.assertEqual({k.split("-")[0] for k in TEMPLATE}, set(DOMAIN_ADVISOR_INTI))
 
     def test_versi_lama_tidak_cocok(self):
-        self.gagal("tidak cocok", engines={"plugin_api": ">=1.4"})
+        self.gagal("tidak cocok", engines={"plugin_api": ">=1.5"})
 
 
 # ── 3. keluaran plugin ───────────────────────────────────────────────────

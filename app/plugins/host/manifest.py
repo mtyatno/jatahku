@@ -25,7 +25,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 #           plugin sendiri, tulis hanya dari rute non-GET), ekspor data plugin (`data_lifecycle.export`).
 # 1.3 (U2): `ctx.catat_pemasukan` (`incomes:write` untuk rute), `@plugin.simpan_field(target)`, `options` untuk field
 #           `select`, persetujuan izin baru untuk instalasi yang sudah ada (`POST …/izin`).
-PLUGIN_API_VERSION = (1, 3, 0)
+# 1.4 (U3): baca agregat `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` (`host/ringkas.py`), `pendamping=` dan
+#           `hanya_bersama=` di `ctx.transactions` / `ctx.incomes` (`meta`), dan `Laporan` dari rute GET yang
+#           digambar host menjadi PDF/CSV (`host/berkas.py`).
+PLUGIN_API_VERSION = (1, 4, 0)
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")

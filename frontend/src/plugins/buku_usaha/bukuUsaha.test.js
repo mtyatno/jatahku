@@ -151,3 +151,73 @@ test('penjualan: amplop bawaan, pesan galat, rupiah', () => {
   assert.equal(pesanUsahaGalat(422, { kode: 'nilai_tidak_sah', detail: 'Tanggal salah.' }).teks, 'Tanggal salah.');
   assert.equal(rupiah('1000001.00'), 'Rp1.000.001');
 });
+
+// ── U3: laba rugi ───────────────────────────────────────────────────────
+import {
+  labelPeriode, pathLaporan, perubahanTampil, persenRasio, pesanLabaRugiGalat, pilihanPeriode, rapikanLabaRugi,
+  rupiah as rupiahU3,
+  tanggalPendek,
+} from './bukuUsaha.js';
+
+test('labelPeriode dan tanggalPendek', () => {
+  assert.equal(labelPeriode('2026-10'), 'Oktober 2026');
+  assert.equal(labelPeriode('2026-13'), '');
+  assert.equal(labelPeriode(null), '');
+  assert.equal(tanggalPendek('2026-10-01'), '1 Okt 2026');
+  assert.equal(tanggalPendek('x'), '');
+});
+
+test('pilihanPeriode melewati pergantian tahun', () => {
+  assert.deepEqual(pilihanPeriode('2026-02-10', 4), ['2026-02', '2026-01', '2025-12', '2025-11']);
+  assert.equal(pilihanPeriode('2026-11-10').length, 12);
+  assert.deepEqual(pilihanPeriode(''), []);
+});
+
+test('persenRasio dan perubahanTampil hanya memformat', () => {
+  assert.equal(persenRasio('0.2539'), '25,4%');
+  assert.equal(persenRasio('0.25'), '25%');
+  assert.equal(persenRasio('-0.00004'), '0%');
+  assert.equal(persenRasio(null), '—');
+  assert.equal(persenRasio('abc'), '—');
+  assert.deepEqual(perubahanTampil('0.0908'), { teks: '+9,1%', arah: 'naik' });
+  assert.deepEqual(perubahanTampil('-0.05'), { teks: '−5%', arah: 'turun' });
+  assert.deepEqual(perubahanTampil('0.00001'), { teks: '0%', arah: 'tetap' });
+  assert.equal(perubahanTampil(null), null);
+});
+
+test('rapikanLabaRugi: bentuk aman dan urutan di luar laba rugi tetap', () => {
+  const d = rapikanLabaRugi({
+    periode: '2026-10', mulai: '2026-10-01', akhir: '2026-10-31', berjalan: false,
+    omzet: '48650000.00', jumlah_penjualan: 112, omzet_tanpa_jenis: { jumlah: '0', banyak: 0 },
+    beban: [{ akun: 'Bahan baku', jumlah: '21800000.00', banyak: 40, porsi: '0.6006' }, null, { akun: 5 }],
+    beban_total: '36300000.00', laba: '12350000.00', margin: '0.2539', prive_dari_laba: '0.4858',
+    di_luar_laba_rugi: [{ jenis: 'modal', jumlah: '0', banyak: 0 }, { jenis: 'prive', jumlah: '6000000.00', banyak: 1 }],
+    banding: { periode: '2026-09', omzet: '44600000.00', beban_total: '34950000.00', laba: '9650000.00', margin: '0.2164' },
+    perubahan: { omzet: '0.0908', beban_total: '0.0386', laba: '0.2798' },
+  });
+  assert.equal(d.beban.length, 1);
+  assert.equal(d.beban[0].porsi, 0.6006);
+  assert.deepEqual(d.diLuar.map(x => [x.id, x.jumlah]), [['prive', '6000000.00'], ['modal', '0'], ['pinjaman', '0'], ['lain', '0']]);
+  assert.equal(d.perubahan.laba.teks, '+28%');
+  assert.equal(d.banding.periode, '2026-09');
+  assert.equal(rapikanLabaRugi({ periode: 'x' }), null);
+  assert.equal(rapikanLabaRugi(null), null);
+});
+
+test('pathLaporan hanya pdf atau csv', () => {
+  assert.equal(pathLaporan('2026-10', 'csv'), '/laporan?periode=2026-10&format=csv');
+  assert.equal(pathLaporan('2026-10', 'xlsx'), '/laporan?periode=2026-10&format=pdf');
+});
+
+test('pesanLabaRugiGalat', () => {
+  assert.equal(pesanLabaRugiGalat(403, { kode: 'tanpa_izin' }).perlu, 'izin');
+  assert.match(pesanLabaRugiGalat(403, { kode: 'khusus_admin' }).teks, /pemilik dan admin/);
+  assert.match(pesanLabaRugiGalat(422, { kode: 'nilai_tidak_sah', detail: 'Periode salah.' }).teks, /Periode salah/);
+});
+
+test('rupiah: rugi bertanda minus di depan', () => {
+  assert.equal(rupiahU3('-840000.00'), '-Rp840.000');
+  assert.equal(rupiahU3('12350000.00'), 'Rp12.350.000');
+  assert.equal(rupiahU3('-0.4'), 'Rp0');
+  assert.equal(rupiahU3('abc'), 'Rp0');
+});

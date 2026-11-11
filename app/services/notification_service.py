@@ -87,7 +87,8 @@ async def send_notification(
                 html = email_template(title, f"<p>{h(message)}</p>", "Buka Jatahku", "https://jatahku.com")
                 send_email(user.email, title, html)
             except Exception as e:
-                logger.error(f"Email notification failed for {user.email}: {e}")
+                # Tanpa alamat dan tanpa pesan galat (bisa memuat alamat): id user dan nama jenis galat saja.
+                logger.error("Email notifikasi user %s gagal (%s)", user.id, type(e).__name__)
 
     finally:
         if should_close:

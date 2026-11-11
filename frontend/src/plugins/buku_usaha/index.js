@@ -2,7 +2,7 @@
 import { lazy } from 'react';
 
 export default {
-  halaman: lazy(() => import('./Halaman.jsx')),      // /p/buku_usaha/* — tab Kontak (U1), Alokasi omzet (U2)
+  halaman: lazy(() => import('./Halaman.jsx')),      // /p/buku_usaha/* — tab Kontak (U1), Alokasi omzet (U2), Laba rugi (U3)
   kartu: {},                                           // kartu kustom: U4
   // Form aksi cepat (U2): menu Catat ▾ dan FAB. Prive tetap inti (R8, `POST /prive`), bukan aksi plugin.
   aksi: { 'buku_usaha.penjualan': lazy(() => import('./FormPenjualan.jsx')) },
