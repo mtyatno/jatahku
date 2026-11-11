@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## U4 · Kartu Beranda dan arus kas · 2026-11-12 · pemilik produk + Claude
 
-**Selesai** (branch `plugin/u4-kartu-beranda`, di atas `main` sesudah #207; tanpa migrasi; Plugin API 1.5; manifest Buku Usaha 0.4.0; tanpa izin baru, jadi instalasi lama tidak perlu menyetujui apa pun)
+**Selesai** (branch `plugin/u4-kartu-beranda`, di atas `main` sesudah #207; PR #208, label `review-keamanan`; tanpa migrasi; Plugin API 1.5; manifest Buku Usaha 0.4.0; tanpa izin baru, jadi instalasi lama tidak perlu menyetujui apa pun)
 - Keputusan pembuka (pemilik, 12 Nov): A kartu `penjualan_saya` untuk karyawan **dibuat** sesuai kontrak v0; B kartu memakai bulan kalender; C Kas usaha = jumlah sisa amplop bersama; D arus kas 13 minggu aktual tanpa proyeksi; E kartu di akhir Beranda, Mode Atur setelah beta (**pemilik minta diingatkan soal ini sesudah beta**); F penanda sumber selalu tampil, tanpa kartu antrean persetujuan, empat kartu dicentang bawaan.
 - **Host/SDK:** kelompok `tanggal` di `ringkas_*` (minggu dirangkai plugin; sama di SQLite dan PostgreSQL); `ctx.envelopes(saldo=True)` → `AmplopView.sisa` dari rumus saldo inti (`keadaan.saldo_amplop`); manifest `cards[].untuk` (`umum` | `karyawan`); `ctx.ringkas_pemasukan_saya` (saringan `user_id` di kueri host, `keadaan.perlu(milik_sendiri=True)`; job `bukan_user`). Katalog, tata letak, dan batch menyaring kartu plugin per peran lewat `registry.boleh`; kartu plugin karyawan disisipkan ke tata letak karyawan tanpa disimpan (`layout.dengan_kartu_plugin_karyawan`, ID `px-…`); tawaran pasang dan `contributions` hanya kartu umum; katalog kartu membawa `sumber`.
 - **Buku Usaha:** delapan `@plugin.kartu`; angka kartu di `metrics.py` (`bulan_kartu`, `minggu`, `arus_kas`, `kas`, `alokasi_omzet`, `pelanggan_teratas`, `penjualan_saya`), bentuk di `kartu.py`, kalimat di `teks.py`.
@@ -36,7 +36,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Modal ajakan Telegram menutupi klik di cek browser pemilik: isi `localStorage.jatahku_tg_prompt_last_shown`; tema lewat `jatahku_theme` (JSON `{color, mode}`).
 
 **Cara melanjutkan**
-- `/tutup-sesi-plugin` (push, PR `Plugin U4: Kartu Beranda dan arus kas`, Closes #155), lalu "review PR #N terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
+- Sesi review baru: "review PR #208 terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy 208`.
+- Deploy PR sebelumnya dicek saat sesi ini ditutup: #205 (run 43077965373) dan #207 (run 43083116108) terverifikasi tayang.
 - Sesudah tayang: di ruang usaha buka Fitur Tambahan → Buku Usaha → "Tambahkan kartu ke Beranda"; cek dengan akun karyawan bahwa hanya "Penjualan saya bulan ini" yang muncul.
 - Berikutnya `/sesi-plugin U5` atau `/sesi-plugin U6`.
 

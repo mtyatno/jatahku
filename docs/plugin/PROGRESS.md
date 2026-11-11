@@ -27,7 +27,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | U1 (migrasi, review) | #152 | Kerangka Buku Usaha dan Kontak | 4 Buku Usaha | 3,5 | H3, R5 | selesai | Pemilik produk + Claude | #196 | 2026-11-05 | 2026-11-09 |
 | U2 | #153 | Penjualan dan alokasi omzet | 4 Buku Usaha | 3,5 | U1 | selesai | Pemilik produk + Claude | #201, #202 (review keamanan) | 2026-11-09 | 2026-11-10 |
 | U3 | #154 | Laba rugi dan laporan | 4 Buku Usaha | 3,5 | U2, R8 | selesai | Pemilik produk + Claude | #204, #207 (review keamanan) | 2026-11-10 | 2026-11-11 |
-| U4 | #155 | Kartu Beranda dan arus kas | 4 Buku Usaha | 3,5 | U3, B3 | berjalan | Pemilik produk + Claude | | 2026-11-12 | |
+| U4 | #155 | Kartu Beranda dan arus kas | 4 Buku Usaha | 3,5 | U3, B3 | review | Pemilik produk + Claude | #208 | 2026-11-12 | |
 | U5 | #156 | Catat cepat versi usaha dan AI Advisor | 4 Buku Usaha | 3,5 | U2, R7 | belum | | | | |
 | U6 | #157 | Chat dan notifikasi admin | 4 Buku Usaha | 2,5 | U3, R5 | belum | | | | |
 | V1 | #158 | Verifikasi dan rilis beta | 5 Beta | 2 | Semua | belum | | | | |
