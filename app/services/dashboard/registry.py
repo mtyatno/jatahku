@@ -63,6 +63,7 @@ class CardDef:
     refresh_on: tuple[str, ...] = ()
     validasi: Callable[[dict], dict] = field(default=_tanpa_pengaturan, compare=False)
     untuk: str = "umum"                 # umum | karyawan (R6)
+    sumber: str | None = None           # U4: nama Fitur Tambahan asal kartu (penanda sumber); None untuk kartu inti
 
     def __post_init__(self):
         if self.untuk not in UNTUK:
@@ -74,7 +75,7 @@ class CardDef:
             "key": self.key, "judul": self.judul, "deskripsi": self.deskripsi, "asal": self.asal,
             "sizes": list(self.sizes), "size_bawaan": self.size_bawaan, "shape": self.shape,
             "supports_period": self.supports_period, "multi_instance": self.multi_instance,
-            "refresh_on": list(self.refresh_on), "hak": "ok", "baru": False,
+            "refresh_on": list(self.refresh_on), "hak": "ok", "baru": False, "sumber": self.sumber,
         }
 
 
@@ -175,7 +176,8 @@ def boleh(definisi: CardDef | None, karyawan: bool) -> bool:
 # bukan diam-diam mendapat kartu umum.
 def katalog(karyawan: bool, plugin: dict | None = None) -> list[dict]:
     """`GET /dashboard/cards`: kartu inti untuk peran ini, lalu kartu plugin yang aktif di ruang ini (H3, `plugin` =
-    `titik.kartu_ruang`). Kartu plugin selalu `untuk="umum"`, jadi tidak pernah masuk katalog karyawan."""
+    `titik.kartu_ruang`). Kartu plugin disaring `boleh` seperti kartu inti (U4): karyawan hanya kartu plugin
+    `untuk="karyawan"`."""
     return [c.katalog() for c in (*REGISTRY.values(), *(plugin or {}).values()) if boleh(c, karyawan)]
 
 

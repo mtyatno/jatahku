@@ -1,13 +1,13 @@
 {
   "id": "buku_usaha",
   "name": "Buku Usaha",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "Jatahku",
   "description": "Pembukuan ringan untuk ruang usaha: kontak pelanggan dan pemasok, jenis pemasukan, alokasi omzet, laba rugi, dan kartu usaha di Beranda.",
   "icon": "book",
   "category": "usaha",
   "engines": {
-    "plugin_api": ">=1.4 <2.0"
+    "plugin_api": ">=1.5 <2.0"
   },
   "space_types": [
     "usaha"
@@ -25,6 +25,86 @@
     "p_buku_usaha_alokasi"
   ],
   "contributes": {
+    "cards": [
+      {
+        "key": "buku_usaha.omzet",
+        "title": "Omzet",
+        "shape": "kpi",
+        "sizes": [
+          "S",
+          "M"
+        ],
+        "default": true
+      },
+      {
+        "key": "buku_usaha.laba",
+        "title": "Laba bersih",
+        "shape": "kpi",
+        "sizes": [
+          "S",
+          "M"
+        ],
+        "default": true
+      },
+      {
+        "key": "buku_usaha.kas",
+        "title": "Kas usaha",
+        "shape": "kpi",
+        "sizes": [
+          "S",
+          "M"
+        ],
+        "default": true
+      },
+      {
+        "key": "buku_usaha.arus_kas_13",
+        "title": "Arus kas 13 minggu",
+        "shape": "series",
+        "sizes": [
+          "L",
+          "XL"
+        ],
+        "default": true
+      },
+      {
+        "key": "buku_usaha.alokasi_omzet",
+        "title": "Alokasi omzet",
+        "shape": "progress",
+        "sizes": [
+          "M",
+          "L"
+        ]
+      },
+      {
+        "key": "buku_usaha.beban_akun",
+        "title": "Beban per akun",
+        "shape": "progress",
+        "sizes": [
+          "M",
+          "L"
+        ]
+      },
+      {
+        "key": "buku_usaha.pelanggan_teratas",
+        "title": "Pelanggan teratas",
+        "shape": "list",
+        "sizes": [
+          "M",
+          "L"
+        ]
+      },
+      {
+        "key": "buku_usaha.penjualan_saya",
+        "title": "Penjualan saya bulan ini",
+        "shape": "kpi",
+        "sizes": [
+          "M",
+          "L"
+        ],
+        "default": true,
+        "untuk": "karyawan"
+      }
+    ],
     "pages": [
       {
         "route": "/p/buku_usaha",

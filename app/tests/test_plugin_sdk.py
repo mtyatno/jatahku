@@ -346,7 +346,10 @@ class ManifestH2Tests(unittest.TestCase):
         self.assertEqual({k.split("-")[0] for k in TEMPLATE}, set(DOMAIN_ADVISOR_INTI))
 
     def test_versi_lama_tidak_cocok(self):
-        self.gagal("tidak cocok", engines={"plugin_api": ">=1.5"})
+        # Satu minor di atas host sekarang (tidak perlu diubah lagi tiap Plugin API naik; U4 menaikkannya ke 1.5).
+        from app.plugins.host.manifest import PLUGIN_API_VERSION
+        besar, kecil = PLUGIN_API_VERSION[:2]
+        self.gagal("tidak cocok", engines={"plugin_api": f">={besar}.{kecil + 1}"})
 
 
 # ── 3. keluaran plugin ───────────────────────────────────────────────────

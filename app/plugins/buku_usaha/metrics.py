@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import re
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from app.plugins.buku_usaha import alokasi as al
 from app.plugins.sdk import NilaiTidakSah
 
 NOL = Decimal("0")
@@ -168,6 +169,139 @@ async def laba_rugi(ctx, th: int, bl: int, hari_ini: date) -> dict:
     pemasukan = await ctx.ringkas_pemasukan(mulai, akhir, per=("bulan", "jenis", "income_meta.jenis"))
     return susun(th, bl, hitung_bulan(kunci(th, bl), transaksi, pemasukan),
                  hitung_bulan(kunci(lth, lbl), transaksi, pemasukan), hari_ini)
+
+
+# ── U4: angka kartu Beranda ──────────────────────────────────────────────
+MINGGU_ARUS_KAS = 13
+PELANGGAN_TERATAS = 5
+
+
+def bulan_kartu(periode, hari: date) -> tuple[int, int]:
+    """Bulan kalender yang ditampilkan kartu (keputusan B U4): Beranda mengirim periode siklus, Buku Usaha memakai
+    bulan kalender. Periode berjalan = bulan ini; periode lampau = bulan tanggal akhirnya; tidak pernah sesudah
+    bulan ini."""
+    if periode is None or periode.berjalan:
+        return hari.year, hari.month
+    return min((periode.end.year, periode.end.month), (hari.year, hari.month))
+
+
+def minggu(hari: date, banyak: int = MINGGU_ARUS_KAS) -> list[tuple[date, date]]:
+    """`banyak` minggu Senin–Minggu berurutan; yang terakhir adalah minggu berjalan."""
+    senin = hari - timedelta(days=hari.weekday())
+    return [(senin - timedelta(weeks=i), senin - timedelta(weeks=i) + timedelta(days=6))
+            for i in range(banyak - 1, -1, -1)]
+
+
+def arus_kas(daftar_minggu, transaksi, pemasukan) -> list[dict]:
+    """Uang masuk dan keluar per minggu (keputusan D U4: aktual, tanpa proyeksi).
+
+    `transaksi`: kunci (tanggal,) dari amplop bersama. `pemasukan`: kunci (tanggal, kind). Masuk = semua pemasukan
+    (`kind` pemasukan atau top-up: penjualan, modal, pinjaman, lain-lain). Keluar = pengeluaran + prive (−alokasi).
+    Transfer antar-amplop dan penyesuaian saldo bukan arus kas."""
+    hasil = [{"mulai": a, "akhir": b, "masuk": NOL, "keluar": NOL} for a, b in daftar_minggu]
+    if not hasil:
+        return hasil
+    awal = hasil[0]["mulai"]
+
+    def kotak(tgl):
+        i = (tgl - awal).days // 7 if tgl is not None else -1
+        return hasil[i] if 0 <= i < len(hasil) else None
+
+    for r in transaksi:
+        k = kotak(r.kunci[0])
+        if k is not None:
+            k["keluar"] += r.jumlah
+    for r in pemasukan:
+        tgl, kind = r.kunci
+        k = kotak(tgl)
+        if k is None:
+            continue
+        if kind in KIND_TANPA_JENIS:
+            k["masuk"] += r.jumlah
+        elif kind == KIND_PRIVE:
+            k["keluar"] += -r.dialokasikan
+    return hasil
+
+
+def kas(amplop) -> dict:
+    """Kas usaha (keputusan C U4) = jumlah sisa semua amplop **bersama** ruang ini (`AmplopView.sisa`, rumus saldo
+    inti); amplop pribadi tidak ikut. `minus` = banyak amplop bersama yang sisanya di bawah nol."""
+    bersama = [a for a in amplop if not a.pribadi]
+    sisa = [a.sisa or NOL for a in bersama]
+    return {"jumlah": sum(sisa, NOL), "amplop": len(bersama), "minus": sum(1 for s in sisa if s < 0)}
+
+
+def alokasi_omzet(aturan, omzet_penjualan: Decimal, terpakai: dict) -> list[dict]:
+    """Jatah tiap amplop dari omzet penjualan bulan itu menurut aturan alokasi (pembagian persis `alokasi.bagi`,
+    sama dengan form Penjualan), dibanding pengeluaran amplop itu. Aturan kosong atau bukan 100% = []."""
+    pasangan = [(a["envelope_id"], a["persen"]) for a in aturan]
+    if not pasangan or al.total_persen(pasangan) != al.SERATUS:
+        return []
+    jatah = al.bagi(Decimal(omzet_penjualan), pasangan) if omzet_penjualan > 0 else [NOL] * len(pasangan)
+    hasil = []
+    for a, j in zip(aturan, jatah):
+        pakai = Decimal(terpakai.get(a["envelope_id"], NOL))
+        hasil.append({"envelope_id": a["envelope_id"], "nama": a["nama"], "persen": a["persen"],
+                      "tujuan": a.get("tujuan") or "expense", "jatah": j, "terpakai": pakai,
+                      "lewat": max(pakai - j, NOL)})
+    return hasil
+
+
+def pelanggan_teratas(baris, batas: int = PELANGGAN_TERATAS) -> list[dict]:
+    """Pelanggan dengan penjualan terbesar. `baris`: kunci (income_meta.jenis, income_meta.kontak_id); hanya
+    penjualan yang punya pelanggan."""
+    hasil = [{"kontak_id": r.kunci[1], "jumlah": r.jumlah, "banyak": r.banyak}
+             for r in baris if r.kunci[0] == "penjualan" and r.kunci[1] is not None]
+    hasil.sort(key=lambda x: (-x["jumlah"], -x["banyak"], str(x["kontak_id"])))
+    return hasil[:batas]
+
+
+def penjualan_saya(baris) -> dict:
+    """Penjualan yang dicatat viewer sendiri. `baris`: kunci (kind, income_meta.jenis) dari
+    `ctx.ringkas_pemasukan_saya`. Sama dengan aturan omzet: berjenis penjualan, atau pemasukan inti tanpa jenis."""
+    jumlah, banyak = NOL, 0
+    for r in baris:
+        kind, jenis = r.kunci
+        if jenis == "penjualan" or (jenis is None and kind in KIND_TANPA_JENIS):
+            jumlah += r.jumlah
+            banyak += r.banyak
+    return {"jumlah": jumlah, "banyak": banyak}
+
+
+async def kas_usaha(ctx) -> dict:
+    return kas(await ctx.envelopes(saldo=True))
+
+
+async def arus_kas_13(ctx, hari: date) -> list[dict]:
+    daftar = minggu(hari)
+    mulai, akhir = daftar[0][0], daftar[-1][1]
+    transaksi = await ctx.ringkas_transaksi(mulai, akhir, per=("tanggal",), hanya_bersama=True)
+    pemasukan = await ctx.ringkas_pemasukan(mulai, akhir, per=("tanggal", "jenis"))
+    return arus_kas(daftar, transaksi, pemasukan)
+
+
+async def omzet_penjualan(ctx, th: int, bl: int) -> Decimal:
+    """Omzet berjenis penjualan saja (tanpa pemasukan tanpa jenis): dasar jatah alokasi."""
+    mulai, akhir = rentang(th, bl)
+    baris = await ctx.ringkas_pemasukan(mulai, akhir, per=("income_meta.jenis",))
+    return sum((r.jumlah for r in baris if r.kunci[0] == "penjualan"), NOL)
+
+
+async def terpakai_per_amplop(ctx, th: int, bl: int) -> dict:
+    mulai, akhir = rentang(th, bl)
+    baris = await ctx.ringkas_transaksi(mulai, akhir, per=("amplop",), hanya_bersama=True)
+    return {str(r.kunci[0]): r.jumlah for r in baris}
+
+
+async def pelanggan_bulan(ctx, th: int, bl: int) -> list[dict]:
+    mulai, akhir = rentang(th, bl)
+    return pelanggan_teratas(await ctx.ringkas_pemasukan(
+        mulai, akhir, per=("income_meta.jenis", "income_meta.kontak_id")))
+
+
+async def penjualan_saya_bulan(ctx, th: int, bl: int) -> dict:
+    mulai, akhir = rentang(th, bl)
+    return penjualan_saya(await ctx.ringkas_pemasukan_saya(mulai, akhir, per=("jenis", "income_meta.jenis")))
 
 
 def hari_ini(ctx) -> date:

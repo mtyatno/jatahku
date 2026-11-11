@@ -13,7 +13,7 @@ import { Icon } from '../components/Icon';
 import { loadCache, saveCache } from '../lib/localCache';
 import { cacheKeyLayout } from '../lib/dashboardRegistry';
 import {
-  STATUS_LABEL, aksiApi, bodyIzinBaru, bodyPasang, bodyTambahKartu, butuhBelumAktif, formatEkspor, izinBaru, pesanGalat, tawaranKartu,
+  STATUS_LABEL, aksiApi, bodyIzinBaru, bodyPasang, bodyTambahKartu, bolehTambahKartu, butuhBelumAktif, formatEkspor, izinBaru, pesanGalat, tawaranKartu,
   tombolUntuk, urutkanKatalog,
 } from '../lib/pluginHost';
 import { EVENT_PLUGIN_BERUBAH } from '../plugins/useKontribusi';
@@ -301,7 +301,7 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
     setSibuk(false);
     setLangkah(null);
     setPesan(hasil.ok
-      ? { teks: `${p.nama} terpasang. Kartunya ada di bagian bawah Beranda.` }
+      ? { teks: `Kartu ${p.nama} ada di bagian bawah Beranda ruang ini.` }
       : { teks: hasil.pesan || 'Kartu belum bisa ditambahkan. Coba lagi dari Beranda nanti.', galat: true });
   };
 
@@ -386,7 +386,7 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
       ) : langkah === 'kartu' ? (
         <Bagian judul="Kartu Beranda">
           <TawaranKartu p={p} sibuk={sibuk} onTambah={tambahKartu}
-            onLewati={() => { setLangkah(null); setPesan({ teks: `${p.nama} terpasang di ${ruangNama}.` }); }} />
+            onLewati={() => { setLangkah(null); setPesan({ teks: `${p.nama} aktif di ${ruangNama}.` }); }} />
         </Bagian>
       ) : langkah === 'wizard' && Wizard ? (
         <Bagian judul="Pengaturan awal">
@@ -409,6 +409,13 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
                   </li>
                 ))}
               </ul>
+              {/* U4: instalasi yang sudah ada sebelum kartunya dirilis (atau yang melewati tawaran) menambahkannya di sini. */}
+              {bolehTambahKartu(p) && (
+                <button type="button" className="btn-outline !py-2 mt-3 inline-flex items-center gap-1.5 disabled:opacity-50"
+                  disabled={sibuk} onClick={() => { setLangkah('kartu'); setPesan(null); }}>
+                  <Icon name="plus" size={16} /> Tambahkan kartu ke Beranda
+                </button>
+              )}
             </Bagian>
           )}
           <Bagian judul={p.izin_diberikan.length ? 'Izin yang sudah diberikan' : 'Izin yang diminta'}>

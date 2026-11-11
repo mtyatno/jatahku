@@ -283,12 +283,14 @@ def rapikan_kartu(shape: str, data: Any, plugin_id: str) -> dict:
 def _definisi(m: Manifest, k):
     from app.services.dashboard.registry import CardDef
     return CardDef(key=k.key, judul=k.title, deskripsi=k.title, size_bawaan=k.sizes[0], sizes=tuple(k.sizes),
-                   shape=k.shape, supports_period=True, asal=m.id)
+                   shape=k.shape, supports_period=True, asal=m.id, untuk=k.untuk, sumber=m.name)
 
 
 async def kartu_ruang(db, user, household_id) -> dict:
     """Definisi kartu plugin yang aktif di ruang ini untuk user ini (key → CardDef). Dipakai tata letak dan batch:
-    kartu plugin yang tidak aktif diparkir dan tidak bisa ditambahkan atau dimuat datanya."""
+    kartu plugin yang tidak aktif diparkir dan tidak bisa ditambahkan atau dimuat datanya. U4: definisi membawa
+    `untuk` dari manifest; siapa yang boleh memuatnya diputuskan `registry.boleh` (kartu `umum` tidak pernah untuk
+    karyawan, kartu `karyawan` hanya untuk karyawan)."""
     if household_id is None or not registry().punya("kartu"):
         return {}
     out = {}

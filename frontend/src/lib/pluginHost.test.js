@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bodyIzinBaru, bodyTambahan, fieldUntuk, isianBolehUntuk, izinBaru,
+  bodyIzinBaru, bodyTambahan, bolehTambahKartu, fieldUntuk, isianBolehUntuk, izinBaru, kontribusiDariKatalog,
   KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, bodyPasang,
   bodyTambahKartu, butuhBelumAktif, formatEkspor, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin,
   namaBerkasUnduhan, namaPlugin, pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
@@ -232,4 +232,39 @@ test('isian plugin tidak untuk pengeluaran pribadi (review #201 T3)', () => {
   assert.equal(isianBolehUntuk({ id: 'a', is_personal: true }, false), false);      // bentuk /envelopes/summary
   assert.equal(isianBolehUntuk({ id: 'a', is_personal: false }, false), true);
   assert.equal(isianBolehUntuk({ id: 'a', owner_id: null }, true), false);
+});
+
+// ── U4: kartu untuk instalasi yang sudah ada, dan kartu karyawan ──
+test('U4: kartu bisa ditambahkan lagi dari panel hanya saat plugin aktif dan user pengelola', () => {
+  const kartu = [{ key: 'a.x', judul: 'X', bawaan: true }];
+  assert.equal(bolehTambahKartu({ status: 'aktif', boleh_kelola: true, kartu }), true);
+  assert.equal(bolehTambahKartu({ status: 'aktif', boleh_kelola: false, kartu }), false);
+  assert.equal(bolehTambahKartu({ status: 'aktif', boleh_kelola: true, kartu: [] }), false);
+  assert.equal(bolehTambahKartu({ status: 'aktif', boleh_kelola: true, kartu, diperbaiki: true }), false);
+  for (const status of ['tersedia', 'terpasang', 'dijeda', 'arsip']) {
+    assert.equal(bolehTambahKartu({ status, boleh_kelola: true, kartu }), false, status);
+  }
+  assert.equal(bolehTambahKartu(null), false);
+});
+
+test('U4: katalog Beranda karyawan menjadi kontribusi kartu saja', () => {
+  const katalog = [
+    { key: 'core.karyawan.catat', judul: 'Catat', asal: 'inti', shape: 'inti', sizes: ['M'], size_bawaan: 'M' },
+    { key: 'buku_usaha.penjualan_saya', judul: 'Penjualan saya bulan ini', asal: 'buku_usaha', sumber: 'Buku Usaha',
+      shape: 'kpi', sizes: ['M', 'L'], size_bawaan: 'M' },
+    { key: 'lain.kartu', judul: 'Tanpa nama sumber', asal: 'lain', shape: 'list', sizes: ['M'], size_bawaan: 'M' },
+    { key: 'palsu.kartu', judul: 'Kunci tidak cocok asal', asal: 'buku_usaha', shape: 'kpi', sizes: ['S'], size_bawaan: 'S' },
+    { key: 'x.y', judul: 'Asal tidak sah', asal: '../x', shape: 'kpi', sizes: ['S'], size_bawaan: 'S' },
+  ];
+  const k = kontribusiDariKatalog(katalog);
+  assert.deepEqual(k.cards.map(c => [c.key, c.plugin, c.judul, c.shape]), [
+    ['buku_usaha.penjualan_saya', 'buku_usaha', 'Penjualan saya bulan ini', 'kpi'],
+    ['lain.kartu', 'lain', 'Tanpa nama sumber', 'list'],
+  ]);
+  assert.equal(namaPlugin(k, 'buku_usaha'), 'Buku Usaha');
+  assert.equal(namaPlugin(k, 'lain'), 'lain');
+  // Hanya kartu: karyawan tidak pernah mendapat menu, aksi, halaman, atau field dari katalog kartu.
+  assert.deepEqual([k.nav, k.quick_actions, k.pages, k.form_fields], [[], [], [], []]);
+  assert.deepEqual(kontribusiDariKatalog(null), KONTRIBUSI_KOSONG);
+  assert.deepEqual(kontribusiDariKatalog([{ key: 'core.kpi.jatah', asal: 'inti' }]).cards, []);
 });

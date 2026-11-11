@@ -111,9 +111,16 @@ async def tolak(k: Keadaan, izin: str, alasan: str):
     raise IzinDitolak(izin, alasan)
 
 
-async def perlu(k: Keadaan, izin: str) -> None:
+async def perlu(k: Keadaan, izin: str, *, milik_sendiri: bool = False) -> None:
+    """`milik_sendiri` (U4): baca yang hanya memuat catatan milik viewer (`ctx.ringkas_pemasukan_saya`). Karyawan
+    boleh melihat catatannya sendiri (seperti kartu inti "Catatanku hari ini", R6), jadi tolak `khusus_admin` tidak
+    berlaku; izin plugin tetap wajib, dan konteks tanpa user (job) tidak punya "saya"."""
     if izin not in k.izin:
         await tolak(k, izin, "tanpa_izin")
+    if milik_sendiri:
+        if k.viewer is None:
+            await tolak(k, izin, "bukan_user")
+        return
     if izin in IZIN_KEUANGAN and karyawan(k):
         await tolak(k, izin, "khusus_admin")
 
@@ -168,3 +175,22 @@ async def catat_audit(household_id, plugin_id: str, actor_id, aksi: str, **detai
             await db.commit()
     except Exception:
         log.exception("audit plugin %s %s gagal dicatat", plugin_id, aksi)
+
+
+# ── saldo amplop (U4) ────────────────────────────────────────────────────
+async def saldo_amplop(k: Keadaan) -> dict:
+    """Sisa tiap amplop aktif ruang konteks yang boleh dilihat viewer (`envelope_id` → `Decimal`), dari rumus saldo inti
+    (`envelope_balance.compute_envelope_summaries`, periode berjalan ruang itu). Pemanggil (`ctx.envelopes`) sudah
+    memeriksa `envelopes:read`. Job (tanpa user): amplop bersama saja."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from sqlalchemy import select
+    from app.models.models import User
+    from app.services.envelope_balance import compute_envelope_summaries
+    uid = k.viewer.id if k.viewer is not None else None
+    payday = None
+    if uid is not None and k.jenis_ruang != "usaha":      # ruang keluarga: siklus = gajian user (cermin ruang)
+        payday = (await k.db.execute(select(User.payday_day).where(User.id == uid))).scalar_one_or_none()
+    baris = await compute_envelope_summaries(SimpleNamespace(id=uid, payday_day=payday), k.db,
+                                             household_id=k.ruang_id)
+    return {b["id"]: Decimal(str(b["remaining"])) for b in baris}

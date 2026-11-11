@@ -91,8 +91,32 @@ async def ambil(db, user_id, household_id, surface: str, *, plugin: dict | None 
     karyawan = untuk == "karyawan"
     row = await _muat(db, user_id, household_id, surface)
     if row is None:
-        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan=karyawan, plugin=plugin)
-    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan=karyawan, plugin=plugin)
+        items, parked, versi = registry.template(surface, karyawan), [], 0
+    else:
+        items, parked, versi = row.items or [], row.parked or [], row.version
+    if karyawan:
+        items = dengan_kartu_plugin_karyawan(items, plugin)
+    return efektif(surface, items, parked, versi, karyawan=karyawan, plugin=plugin)
+
+
+JANGKAR_PLUGIN_KARYAWAN = "core.karyawan.hari_ini"
+
+
+def dengan_kartu_plugin_karyawan(items: list[dict], plugin: dict | None) -> list[dict]:
+    """U4: kartu Fitur Tambahan `untuk="karyawan"` yang aktif di ruang ini ikut tampil di Beranda karyawan tanpa
+    disimpan. Karyawan tidak punya halaman Fitur Tambahan atau Mode Atur untuk menambahkannya sendiri, dan kartu itu
+    hilang begitu plugin dijeda atau dicopot (tidak ada yang tertinggal di dokumen). Disisipkan sesudah kartu
+    "Hari ini"; ID instans tetap per kartu (`px-<kunci>`), jadi cache klien stabil."""
+    ada = {i.get("card") for i in items}
+    baru = [{"id": ("px-" + d.key.replace(".", "-"))[:40], "card": d.key, "size": d.size_bawaan, "hidden": False,
+             "devices": "all"}
+            for d in sorted((plugin or {}).values(), key=lambda d: d.key)
+            if d.untuk == "karyawan" and d.key not in ada]
+    if not baru:
+        return items
+    hasil = [dict(i) for i in items]
+    letak = next((n + 1 for n, i in enumerate(hasil) if i.get("card") == JANGKAR_PLUGIN_KARYAWAN), len(hasil))
+    return hasil[:letak] + baru + hasil[letak:]
 
 
 async def hapus_milik(db, user_id, household_id) -> None:

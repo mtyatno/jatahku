@@ -196,6 +196,29 @@ export function tawaranKartu(p) {
   return arr(p?.kartu).map(k => ({ key: k.key, judul: k.judul, terpilih: !!k.bawaan }));
 }
 
+/** U4: kartu bisa ditambahkan lagi dari panel Fitur Tambahan (instalasi yang sudah ada sebelum kartunya dirilis, atau
+ *  yang dulu melewati tawaran). Hanya plugin aktif, hanya pengelola; kartu yang sudah ada tidak digandakan
+ *  (`bodyTambahKartu`). */
+export function bolehTambahKartu(p) {
+  return !!p && p.status === 'aktif' && !!p.boleh_kelola && !p.diperbaiki && tawaranKartu(p).length > 0;
+}
+
+/**
+ * U4: kontribusi "kartu saja" dari katalog GET /dashboard/cards, untuk Beranda karyawan. Karyawan tidak memanggil
+ * GET /plugins/contributions (403), tetapi katalog kartunya memuat kartu Fitur Tambahan `untuk: "karyawan"` yang aktif
+ * di ruang itu (`asal` = id plugin, `sumber` = namanya). Tidak pernah menghasilkan menu, aksi, halaman, atau field.
+ */
+export function kontribusiDariKatalog(defs) {
+  const kartu = arr(defs).filter(d => d && typeof d.asal === 'string' && d.asal !== 'inti');
+  const nama = {};
+  kartu.forEach(d => { if (!nama[d.asal]) nama[d.asal] = d.sumber || d.asal; });
+  return rapikanKontribusi({
+    plugins: Object.keys(nama).map(id => ({ id, nama: nama[id] })),
+    cards: kartu.map(d => ({ key: d.key, plugin: d.asal, judul: d.judul, shape: d.shape, sizes: d.sizes,
+      size_bawaan: d.size_bawaan, bawaan: false })),
+  });
+}
+
 const ID_INSTANS_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 function idBaru(dipakai) {

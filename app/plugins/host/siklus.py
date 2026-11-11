@@ -154,7 +154,10 @@ async def katalog(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, 
             "ikon": m.icon, "kategori": m.category, "jenis_ruang": list(m.space_types),
             **{k: v for k, v in ke_api(m, inst).items() if k != "plugin"},
             "izin": m.izin_tampil(),
-            "kartu": [{"key": k.key, "judul": k.title, "bawaan": k.default} for k in m.contributes.cards],
+            # Tawaran kartu untuk pemasang (owner/admin): kartu karyawan tidak ditawarkan, ia tampil sendiri di
+            # Beranda karyawan (U4).
+            "kartu": [{"key": k.key, "judul": k.title, "bawaan": k.default} for k in m.contributes.cards
+                      if k.untuk == "umum"],
             "hak": await hak(db, household_id, m),
             # U1: format unduhan data plugin (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`); [] bila plugin tanpa data.
             "ekspor": list(m.data_lifecycle.export) if m.entities else [],
@@ -206,7 +209,7 @@ def kontribusi(aktif: list[Manifest], kartu: dict) -> dict:
             out["quick_actions"].append({"plugin": m.id, "key": a.key, "label": a.label, "ikon": m.icon})
         for k in c.cards:
             d = kartu.get(k.key)
-            if d is None:           # plugin tanpa kode kartu: tidak bisa dimuat, jadi tidak ditawarkan
+            if d is None or d.untuk != "umum":   # tanpa kode kartu, atau kartu karyawan (U4): tidak ditawarkan
                 continue
             out["cards"].append({"key": k.key, "plugin": m.id, "judul": k.title, "shape": k.shape,
                                  "sizes": list(k.sizes), "size_bawaan": k.sizes[0], "bawaan": k.default})

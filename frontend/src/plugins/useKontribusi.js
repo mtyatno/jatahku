@@ -3,17 +3,20 @@
 // - Sumber: GET /plugins/contributions (menu, aksi cepat, halaman, kartu) dan GET /plugins (ada katalog atau tidak, untuk
 //   pintu Fitur Tambahan). Server yang memutuskan: status per ruang, saklar darurat, flag, peran.
 // - Karyawan tidak memanggil keduanya (server menolak, 403) dan tidak pernah mendapat kontribusi (keputusan H3 B).
+//   U4: yang ia dapat hanya kartu Fitur Tambahan `untuk: "karyawan"` dari katalog kartunya sendiri
+//   (GET /dashboard/cards, sudah disaring server per peran); kartu itu didaftarkan ke CardRegistry dan kuncinya
+//   dibagikan sebagai `kartuKaryawan` supaya Beranda karyawan menggambar ulang. Menu, aksi, dan halaman tetap kosong.
 // - Cache per user dan per ruang (akhiran ruang dari localCache, ADR-P16): menu plugin satu ruang tidak pernah tampil
 //   di ruang lain; ganti ruang memuat ulang halaman. Offline memakai cache; ditolak server = kosong.
 // - Event `jatahku:plugin-berubah` (sesudah pasang, jeda, copot) memuat ulang.
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { loadCache, saveCache } from '../lib/localCache';
-import { KONTRIBUSI_KOSONG, rapikanKontribusi } from '../lib/pluginHost';
+import { KONTRIBUSI_KOSONG, kontribusiDariKatalog, rapikanKontribusi } from '../lib/pluginHost';
 import { daftarkanKartuPlugin } from './kartu';
 
 export const EVENT_PLUGIN_BERUBAH = 'jatahku:plugin-berubah';
-const KOSONG = { kontribusi: KONTRIBUSI_KOSONG, katalogAda: false, siap: false };
+const KOSONG = { kontribusi: KONTRIBUSI_KOSONG, katalogAda: false, siap: false, kartuKaryawan: '' };
 
 export function useKontribusiPlugin({ userId, karyawan, menungguPeran }) {
   const [state, setState] = useState(KOSONG);
@@ -21,9 +24,20 @@ export function useKontribusiPlugin({ userId, karyawan, menungguPeran }) {
   useEffect(() => {
     if (!userId || menungguPeran) return undefined;
     if (karyawan) {
-      daftarkanKartuPlugin(KONTRIBUSI_KOSONG);
-      setState({ ...KOSONG, siap: true });
-      return undefined;
+      let hidup = true;
+      const kunciKartu = `plugin_kartu_karyawan:${userId}`;
+      const pasangKartu = (defs) => {
+        const k = kontribusiDariKatalog(defs);
+        daftarkanKartuPlugin(k);
+        setState({ ...KOSONG, siap: true, kartuKaryawan: k.cards.map(c => c.key).join(',') });
+      };
+      pasangKartu(loadCache(kunciKartu));
+      api.kartuBeranda().then((r) => {
+        if (!hidup) return;
+        // Jaringan putus (status 0): pertahankan cache. Ditolak server (403, di luar jam kerja): tanpa kartu plugin.
+        if (r.ok) { pasangKartu(r.data); saveCache(kunciKartu, r.data); } else if (r.status !== 0) pasangKartu(null);
+      });
+      return () => { hidup = false; };
     }
     let live = true;
     const kunci = `plugin_kontribusi:${userId}`;

@@ -292,9 +292,10 @@ Implementasi: `app/api/routes/dashboard.py`, `app/services/dashboard/`. Ruang = 
 // GET /dashboard/cards → katalog kartu untuk user, ruang, peran, dan platform ini
 [{"key": "core.kpi.jatah", "judul": "Jatah hari ini", "deskripsi": "…", "asal": "inti", "sizes": ["S", "M"],
   "size_bawaan": "S", "shape": "kpi", "supports_period": true, "multi_instance": false,
-  "refresh_on": ["jatahku:txn-added", "…"], "hak": "ok", "baru": false}]
+  "refresh_on": ["jatahku:txn-added", "…"], "hak": "ok", "baru": false, "sumber": null}]
 // asal: inti | <plugin_id>. hak: ok | butuh_plugin | butuh_paket (H1). Kartu laporan usaha tidak tercantum
 // untuk peran member (U4). refresh_on: event window yang membuat kartu dimuat ulang (B2).
+// sumber (U4, aditif): nama Fitur Tambahan asal kartu ("Buku Usaha") untuk penanda sumber; null untuk kartu inti.
 
 // POST /dashboard/data {"periode": "2026-10-01" | null, "items": [{"id": "a1", "card": "core.kpi.jatah", "settings": {}}]}
 {
@@ -394,6 +395,18 @@ Server menyaring di setiap route `/dashboard/*`:
 
 Catatan dan draf hanya milik karyawan itu sendiri di ruang itu; tidak ada saldo, total ruang, atau catatan anggota lain.
 Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
+
+**Kartu Fitur Tambahan per peran (U4).** Kartu plugin menyatakan `untuk` di manifest (`contributes.cards[].untuk`,
+bawaan `umum`) dan disaring persis seperti kartu inti di keempat route di atas. Kartu plugin `umum` tidak pernah untuk
+karyawan (`khusus_admin`, penyedianya tidak dipanggil). Kartu plugin `untuk: "karyawan"`:
+
+- tercantum di `GET /dashboard/cards` karyawan (dengan `asal` dan `sumber`), tidak di katalog peran lain, tidak di
+  tawaran kartu `GET /plugins` (`kartu`), dan tidak di `GET /plugins/contributions` (`cards`);
+- ikut `GET /dashboard/layout` karyawan tanpa disimpan: instans ber-ID `px-<kunci dengan titik menjadi tanda hubung>`
+  disisipkan sesudah `core.karyawan.hari_ini` selama plugin aktif di ruang itu untuk user itu, dan hilang (bukan
+  diparkir) saat plugin dijeda, dicopot, dimatikan server, atau user di luar flag;
+- datanya dimuat `POST /dashboard/data` seperti kartu lain; untuk peran lain `kartu_tidak_dikenal`;
+- fungsinya hanya bisa membaca catatan milik karyawan itu sendiri (§5 "Baca untuk kartu").
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
@@ -589,6 +602,20 @@ Tanpa endpoint baru; bentuk untuk plugin (`app/plugins/host/ringkas.py`, `Plugin
   (aditif): `TransaksiView.meta` / `PemasukanView.meta` = baris pendamping hidup tanpa kolom host dan rujukan, `null` bila
   tidak ada atau transaksinya privat milik orang lain.
 
+### Baca untuk kartu (SDK) — **v1 (U4, Plugin API 1.5)**
+
+Tanpa endpoint baru dan tanpa izin baru (instalasi lama tidak perlu menyetujui apa pun):
+
+- Kelompok `tanggal` di `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan`: nilai kunci berupa `date` tanggal catatan.
+  Plugin merangkainya sendiri menjadi minggu atau hari; batas 1.000 kelompok tetap berlaku.
+- `ctx.envelopes(saldo=True)` (`envelopes:read`): `AmplopView.sisa` = sisa amplop di periode berjalan ruang itu dari rumus
+  saldo inti (`envelope_balance.py`: alokasi + rollover − terpakai), sama dengan halaman Amplop. Tanpa `saldo`, `sisa`
+  bernilai `null`. Karyawan tetap `khusus_admin`.
+- `ctx.ringkas_pemasukan_saya(mulai, akhir, *, per=())` (`incomes:read`): seperti `ringkas_pemasukan`, tetapi hanya
+  pemasukan yang dicatat **viewer sendiri** di ruang konteks (saringan `user_id` di kueri host). Satu-satunya baca
+  keuangan yang terbuka untuk karyawan; konteks tanpa user (job) ditolak `bukan_user`; tanpa izin `tanpa_izin`.
+- Manifest `contributes.cards[].untuk`: `"umum"` (bawaan) atau `"karyawan"` (§4 "Kartu Fitur Tambahan per peran").
+
 ### Berkas laporan dari rute — **v1 (U3, Plugin API 1.4)**
 
 - Rute **GET** boleh mengembalikan `Laporan(format: "pdf"|"csv", nama_berkas, judul, subjudul, ringkasan: ((label,
@@ -609,10 +636,10 @@ Tanpa endpoint baru; bentuk untuk plugin (`app/plugins/host/ringkas.py`, `Plugin
   `Content-Security-Policy: default-src 'none'; sandbox`. Setiap unduhan diaudit `laporan` (`format`, `rute`; tanpa
   angka). Web menyimpannya lewat `api.unduhPluginRute` (lapisan native), tidak membukanya di tab aplikasi.
 
-## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha), alokasi + penjualan + field pengeluaran (U2), laba rugi + laporan (U3, PR plugin/u3-laba-rugi)**
+## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha), alokasi + penjualan + field pengeluaran (U2), laba rugi + laporan (U3, PR plugin/u3-laba-rugi), kartu Beranda (U4, PR plugin/u4-kartu-beranda)**
 
 Semua di bawah `/p/buku_usaha/` (endpoint plugin §5: ruang dari header, owner/admin); 404 `plugin_tidak_aktif` bila
-Buku Usaha tidak aktif di ruang itu. Kartu Beranda (U4) masih v0. Manifest 0.3.0 (`plugin_api >=1.4 <2.0`): izin
+Buku Usaha tidak aktif di ruang itu. Kartu Beranda v1 (U4, di bawah). Manifest 0.4.0 (`plugin_api >=1.5 <2.0`): izin
 `envelopes:read`, `transactions:read`, `incomes:read`, `incomes:write`; instalasi lama menyetujui izin baru lewat
 `POST …/izin` (sebelum itu laba rugi dan laporan 403 `tanpa_izin`).
 
@@ -704,7 +731,25 @@ Buku Usaha tidak aktif di ruang itu. Kartu Beranda (U4) masih v0. Manifest 0.3.0
 //   mengatakannya dan total tetap dari agregat. Pengeluaran privat anggota lain tersamar ("Transaksi privat"), tanpa akun/pemasok.
 ```
 
-Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas`, `buku_usaha.arus_kas_13`, `buku_usaha.alokasi_omzet`, `buku_usaha.beban_akun`, `buku_usaha.pelanggan_teratas` (owner, admin) dan `buku_usaha.penjualan_saya` (member).
+### Kartu Beranda — **v1 (U4, PR plugin/u4-kartu-beranda)**
+
+Bentuk deklaratif (§4), data lewat `POST /dashboard/data`. Angka dari `metrics.py`, kalimat dari `teks.py`. Kartu
+memakai **bulan kalender**, bukan periode siklus Beranda: periode berjalan = bulan ini (zona user), periode lampau =
+bulan tanggal akhirnya. Nominal berupa string desimal.
+
+| Kunci | Untuk | `shape`, ukuran | Isi |
+| --- | --- | --- | --- |
+| `buku_usaha.omzet` | umum | kpi, S/M | `value` omzet bulan itu (aturan laba rugi U3), `suffix` "N penjualan", `chip` naik/turun dari bulan lalu (kosong untuk bulan berjalan), `footer` bulan dan omzet bulan lalu |
+| `buku_usaha.laba` | umum | kpi, S/M | `value` laba, `suffix` "margin X%", `chip` seperti omzet, `tone` `danger` bila rugi, `footer` bulan, omzet, beban |
+| `buku_usaha.kas` | umum | kpi, S/M | `value` jumlah sisa semua amplop **bersama** saat ini (amplop pribadi tidak; tidak mengikuti periode), `suffix` "N amplop", `tone` `danger` bila minus, `footer` menyebut banyak amplop minus |
+| `buku_usaha.arus_kas_13` | umum | series, L/XL | 13 minggu Senin–Minggu sampai minggu berjalan; `x` tanggal Senin ("9 Nov"); seri Masuk (semua pemasukan: penjualan, modal, pinjaman, lain-lain) dan Keluar (pengeluaran amplop bersama + prive). Aktual, tanpa proyeksi; transfer dan penyesuaian tidak dihitung |
+| `buku_usaha.alokasi_omzet` | umum | progress, M/L | Per aturan alokasi, label "Nama · P%". Amplop belanja: `value` terpakai bulan itu, `target` jatah = pembagian `alokasi.bagi` atas omzet berjenis penjualan, `tone` `danger` bila lewat. Amplop cadangan (`saving`): `value` jatah saja. Aturan belum 100% = `items` kosong |
+| `buku_usaha.beban_akun` | umum | progress, M/L | Beban per akun (urutan laba rugi, "Belum berakun" terakhir): `value` jumlah, `target` total beban |
+| `buku_usaha.pelanggan_teratas` | umum | list, M/L | Lima pelanggan dengan penjualan terbesar bulan itu: `judul` nama, `subjudul` "N penjualan", `nominal`; penjualan tanpa pelanggan tidak ikut |
+| `buku_usaha.penjualan_saya` | karyawan | kpi, M/L | `value` dan `suffix` penjualan yang dicatat karyawan itu sendiri bulan ini (berjenis penjualan, atau pemasukan inti tanpa jenis); tidak ada angka ruang |
+
+Empat kartu pertama `default: true` (dicentang di tawaran saat pasang). Instalasi yang sudah aktif menambahkannya dari
+panel Fitur Tambahan ("Tambahkan kartu ke Beranda"); kartu masuk di akhir Beranda (Mode Atur setelah beta).
 
 ## 7. Kode galat
 
