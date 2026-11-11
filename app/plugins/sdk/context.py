@@ -51,7 +51,7 @@ MAKS_NOTIFY_PER_KONTEKS = 10
 
 class IzinDitolak(Exception):
     """Plugin memanggil sesuatu di luar izinnya. `alasan`: `tanpa_izin` | `khusus_admin` | `jenis_tidak_dikenal` |
-    `bukan_job` | `batas_notify`."""
+    `bukan_job` | `bukan_user` | `batas_notify`."""
 
     def __init__(self, izin: str, alasan: str = "tanpa_izin"):
         super().__init__(f"{izin}: {alasan}")
@@ -80,6 +80,7 @@ class AmplopView:
     anggaran: Decimal
     pribadi: bool                 # amplop pribadi milik viewer
     dikunci: bool
+    sisa: Decimal | None = None   # U4: sisa periode berjalan (rumus saldo inti), hanya dari `envelopes(saldo=True)`
 
 
 @dataclass(frozen=True)
@@ -327,8 +328,11 @@ class PluginContext(metaclass=_KelasBeku):
         return DataPlugin(self, entitas)
 
     # ── baca ──
-    async def envelopes(self) -> list[AmplopView]:
-        """`envelopes:read`: amplop aktif ruang ini yang boleh dilihat viewer."""
+    async def envelopes(self, *, saldo: bool = False) -> list[AmplopView]:
+        """`envelopes:read`: amplop aktif ruang ini yang boleh dilihat viewer.
+
+        U4: `saldo=True` mengisi `sisa` = sisa amplop di periode berjalan ruang ini, dari rumus saldo inti
+        (`envelope_balance.py`: alokasi + rollover − terpakai), sama dengan halaman Amplop."""
         k = _k(self)
         await _host.perlu(k, "envelopes:read")
         from app.models.models import Envelope
@@ -337,10 +341,11 @@ class PluginContext(metaclass=_KelasBeku):
                                    _amplop_terlihat(k, Envelope))
             .order_by(Envelope.name).limit(BATAS_BARIS)
         )).scalars().all()
+        sisa = await _host.saldo_amplop(k) if saldo else {}
         return [AmplopView(id=e.id, nama=e.name, emoji=e.emoji or "",
                            tujuan=str(getattr(e.purpose, "value", e.purpose) or "expense"),
                            anggaran=Decimal(e.budget_amount or 0), pribadi=e.owner_id is not None,
-                           dikunci=bool(e.is_locked)) for e in rows]
+                           dikunci=bool(e.is_locked), sisa=sisa.get(e.id)) for e in rows]
 
     async def transactions(self, mulai: date, akhir: date, *, amplop_id: UUID | None = None,
                            pendamping: str | None = None, hanya_bersama: bool = False) -> list[TransaksiView]:
@@ -407,6 +412,15 @@ class PluginContext(metaclass=_KelasBeku):
         await _host.perlu(k, "incomes:read")
         from app.plugins.host import ringkas
         return await ringkas.ringkas_pemasukan(k, mulai, akhir, per=per)
+
+    async def ringkas_pemasukan_saya(self, mulai: date, akhir: date, *, per=()) -> list[RingkasanView]:
+        """`incomes:read` (U4): seperti `ringkas_pemasukan`, tetapi hanya pemasukan yang dicatat **viewer sendiri** di
+        ruang ini. Satu-satunya baca keuangan yang terbuka untuk karyawan (kartu `untuk: "karyawan"`): ia hanya
+        melihat catatannya sendiri, tidak pernah angka ruang. Konteks tanpa user (job) ditolak `bukan_user`."""
+        k = _k(self)
+        await _host.perlu(k, "incomes:read", milik_sendiri=True)
+        from app.plugins.host import ringkas
+        return await ringkas.ringkas_pemasukan(k, mulai, akhir, per=per, milik=k.viewer.id)
 
     async def income(self, income_id: UUID) -> PemasukanView | None:
         """`incomes:read`: satu pemasukan yang boleh dilihat; None bila tidak ada, milik ruang lain, atau (di ruang

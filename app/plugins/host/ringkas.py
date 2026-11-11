@@ -11,13 +11,16 @@ Aturan yang sama dengan baca baris (`sdk/context.py`):
   bersama + amplop pribadi viewer; job: amplop bersama). `hanya_bersama=True` membuang amplop pribadi viewer juga.
   Pemasukan mengikuti `_pemasukan_terlihat` (ruang usaha: semua; ruang keluarga: milik viewer).
 - **Izin** `transactions:read` / `incomes:read`; karyawan ditolak `khusus_admin` (pemeriksaan di metode konteks).
-- **Kelompok** (`per`, paling banyak `MAKS_PER`): `bulan` ("YYYY-MM" tanggal catatan); transaksi juga `amplop` (UUID);
-  pemasukan juga `jenis` (`incomes.kind`). Selain itu `"<entitas>.<kolom>"` dari tabel **pendamping** plugin itu sendiri
+- **Kelompok** (`per`, paling banyak `MAKS_PER`): `bulan` ("YYYY-MM" tanggal catatan), `tanggal` (`date` tanggal
+  catatan; U4, untuk deret harian/mingguan yang dirangkai plugin); transaksi juga `amplop` (UUID); pemasukan juga
+  `jenis` (`incomes.kind`). Selain itu `"<entitas>.<kolom>"` dari tabel **pendamping** plugin itu sendiri
   (1:1 dengan `transactions`/`incomes`, mis. `txn_meta.akun`, `income_meta.jenis`): left join ke baris hidup di ruang
   yang sama. Kolom milik host (`WAJIB`) dan kolom rujukan ke induknya tidak boleh dipakai sebagai kelompok.
 - **Privasi.** Kelompok dari tabel pendamping untuk transaksi yang deskripsinya tersamar bagi viewer (privat milik
   anggota lain; job: semua privat) bernilai `None`, seperti `masked_description`: nominal tetap ikut dijumlah (kontrak
   visibilitas: agregat utuh), kategorinya tidak terbaca.
+- **Milik sendiri** (U4): `ringkas_pemasukan(..., milik=<user_id>)` hanya menjumlah pemasukan yang dicatat user itu di
+  ruang konteks. Dipakai `ctx.ringkas_pemasukan_saya`, satu-satunya baca keuangan yang terbuka untuk karyawan.
 - **Pemasukan** juga mengembalikan `dialokasikan` = jumlah alokasinya. Gerakan internal bernominal 0 (prive keluar,
   transfer) hanya terbaca lewat angka ini (R8: prive keluar = alokasi negatif).
 """
@@ -137,6 +140,8 @@ async def ringkas_transaksi(k, mulai: date, akhir: date, *, per=(), hanya_bersam
         if p == "bulan":
             kelompok.append(("bulan", [extract("year", Transaction.transaction_date),
                                        extract("month", Transaction.transaction_date)]))
+        elif p == "tanggal":
+            kelompok.append(("tanggal", [Transaction.transaction_date]))
         elif p == "amplop":
             kelompok.append(("amplop", [Transaction.envelope_id]))
         else:
@@ -161,13 +166,15 @@ async def ringkas_transaksi(k, mulai: date, akhir: date, *, per=(), hanya_bersam
             for kunci, v in _urai(rows, kelompok)]
 
 
-async def ringkas_pemasukan(k, mulai: date, akhir: date, *, per=()) -> list:
+async def ringkas_pemasukan(k, mulai: date, akhir: date, *, per=(), milik=None) -> list:
     from app.models.models import Allocation, Income
     from app.plugins.sdk.context import RingkasanView, _pemasukan_terlihat
     _rentang(mulai, akhir)
     per = _per(per)
     dasar = and_(Income.household_id == k.ruang_id, _pemasukan_terlihat(k, Income),
                  Income.income_date >= mulai, Income.income_date <= akhir)
+    if milik is not None:
+        dasar = and_(dasar, Income.user_id == milik)
     alok = (select(Allocation.income_id.label("income_id"), func.sum(Allocation.amount).label("jumlah"))
             .join(Income, Income.id == Allocation.income_id).where(dasar)
             .group_by(Allocation.income_id).subquery())
@@ -176,6 +183,8 @@ async def ringkas_pemasukan(k, mulai: date, akhir: date, *, per=()) -> list:
     for p in per:
         if p == "bulan":
             kelompok.append(("bulan", [extract("year", Income.income_date), extract("month", Income.income_date)]))
+        elif p == "tanggal":
+            kelompok.append(("tanggal", [Income.income_date]))
         elif p == "jenis":
             kelompok.append(("jenis", [Income.kind]))
         else:

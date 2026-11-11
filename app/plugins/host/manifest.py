@@ -28,7 +28,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # 1.4 (U3): baca agregat `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` (`host/ringkas.py`), `pendamping=` dan
 #           `hanya_bersama=` di `ctx.transactions` / `ctx.incomes` (`meta`), dan `Laporan` dari rute GET yang
 #           digambar host menjadi PDF/CSV (`host/berkas.py`).
-PLUGIN_API_VERSION = (1, 4, 0)
+# 1.5 (U4): kelompok `tanggal` di baca agregat, `ctx.envelopes(saldo=True)` (`AmplopView.sisa`), kartu `untuk:
+#           "karyawan"` (Beranda karyawan), dan `ctx.ringkas_pemasukan_saya` (hanya catatan milik viewer; satu-satunya
+#           baca keuangan yang terbuka untuk karyawan).
+PLUGIN_API_VERSION = (1, 5, 0)
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")
@@ -128,7 +131,11 @@ class Kartu(_Ketat):
     title: str = Field(min_length=1, max_length=40)
     shape: Literal[CARD_SHAPES]
     sizes: list[Literal[CARD_SIZES]] = Field(min_length=1)
-    default: bool = False          # ditawarkan masuk Beranda saat pasang
+    default: bool = False          # ditawarkan masuk Beranda saat pasang (kartu karyawan: langsung tampil)
+    # U4: "umum" = pemilik dan admin (dan semua anggota ruang keluarga); "karyawan" = hanya karyawan ruang usaha
+    # (Beranda template Karyawan). Fungsi kartu karyawan berjalan dengan peran karyawan: baca keuangan ruang ditolak
+    # `khusus_admin`, yang terbuka hanya catatan milik viewer (`ctx.ringkas_pemasukan_saya`).
+    untuk: Literal["umum", "karyawan"] = "umum"
 
 
 class Halaman(_Ketat):
