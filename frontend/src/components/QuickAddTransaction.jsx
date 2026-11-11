@@ -24,7 +24,7 @@ function isInsufficientFundsError(errMsg) {
 
 // `isianPlugin` (Plugin U2): field Fitur Tambahan untuk transaksi di ruang aktif (`pluginHost.fieldUntuk`), mis. pemasok
 // dan akun beban Buku Usaha; dikirim sebagai `tambahan`. Kosong = form seperti biasa.
-export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [] }) {
+export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [], ruangUsaha = false }) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [envelopeId, setEnvelopeId] = useState('');
@@ -112,7 +112,7 @@ export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [
   };
 
   const selectedEnv = envelopes.find(e => e.id === envelopeId);
-  const showPrivate = shouldShowPrivateToggle(memberCount, selectedEnv);
+  const showPrivate = shouldShowPrivateToggle(memberCount, selectedEnv, { ruangUsaha });
   const tampilIsian = isianPlugin.length > 0 && isianBolehUntuk(selectedEnv, showPrivate && isPrivate);
 
   const submit = async (extra = {}) => {

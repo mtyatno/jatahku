@@ -724,6 +724,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |
 | `perlu_persetujuan` | 202 | Di atas `batas_nominal`; draf dibuat, belum menjadi transaksi |
+| `privat_tidak_tersedia` | 422 / per baris | Pengeluaran bertanda privat (`is_private: true`) di ruang usaha, untuk semua peran (`POST /transactions/`, per baris di `/batch`); tidak ada yang dicatat (keputusan 11 Nov 2026) |
 | `client_ref_bentrok` | 409 / per baris | `client_ref` sudah dipakai catatan lain (ruang, jenis, atau amplop berbeda); tidak ada yang dicatat (R7, review keamanan #191) |
 | `jendela_ubah_lewat` | 403 | Mengubah atau menghapus catatan di luar jendela |
 | `butuh_paket_usaha` | 402 | Ruang usaha tanpa hak Paket Usaha (ADR-P13) |

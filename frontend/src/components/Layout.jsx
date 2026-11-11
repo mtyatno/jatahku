@@ -1000,7 +1000,8 @@ export default function Layout() {
             {aksiLama === 'expense' && (
               <MultiAddTransaction onSaved={closeAction} onCancel={closeAction}
                 initialPhoto={actionPayload?.photo} photoMode={actionPayload?.photoMode}
-                isianPlugin={karyawan ? [] : fieldUntuk(kontribusi, 'transaction')} />
+                isianPlugin={karyawan ? [] : fieldUntuk(kontribusi, 'transaction')}
+                ruangUsaha={ruang?.aktif?.jenis === 'usaha'} />
             )}
             {aksiLama === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
             {aksiLama === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
