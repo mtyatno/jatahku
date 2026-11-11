@@ -4,6 +4,32 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## Privat dimatikan di ruang usaha · 2026-11-11 · pemilik produk + Claude
+
+**Selesai** (branch `plugin/privat-ruang-usaha` dari `main`; PR #205; tanpa migrasi; tindak lanjut keputusan C U3)
+- Keputusan pemilik 11 Nov: ruang usaha tidak punya pengeluaran privat untuk semua peran (pengeluaran usaha terbuka bagi pemilik dan admin); karyawan sama sekali tidak bisa mencatat transaksi privat; kiriman bertanda privat ditolak, bukan diam-diam dicatat terbuka; transaksi privat lama dibiarkan (masih uji coba, tanpa data nyata); review keamanan terpisah.
+- Server (`routes/transactions.py`): `POST /transactions/` → 422 `privat_tidak_tersedia` sebelum isian plugin, batasan, draf, dan kunci idempotensi; `POST /transactions/batch` → galat per baris, baris lain tetap tercatat. Persetujuan draf (`ruang_kelola.py`) mencatat draf lama bertanda privat sebagai pengeluaran biasa (admin sudah melihat keterangannya di antrean).
+- Web: `shouldShowPrivateToggle(…, { ruangUsaha })` menyembunyikan pilihan di ruang usaha; `Layout` → `MultiAddTransaction` → `QuickAddTransaction` (`ruang.aktif.jenis`). Catat karyawan dan Catat banyak memang tidak punya pilihan privat.
+- Tes: unittest penuh 3660 dijalankan; 2 tes lama sengaja disesuaikan karena memakai privat di ruang usaha (`test_plugin_u2` T3 dan `test_ruang_r7` kamus privat: kini 422 `privat_tidak_tersedia`, lapis kedua tetap diuji: isian plugin untuk `is_private` dan hook `_after_saved(is_private=True)` tidak mengajari kamus ruang); 4 suite terkait diulang lulus (78 tes, +5 `test_privat_ruang_usaha.py`); node --test 745 (`src/lib`) lulus; build ok; `openapi_cek` tanpa perubahan memutus. Uji mutasi: cek tunggal, cek batch, dan persetujuan draf masing-masing dicabut → tes gagal.
+- Tidak dicek di browser: perubahan web hanya menyembunyikan satu kotak centang lewat fungsi yang dites; server yang menjaga.
+
+- **Review keamanan terpisah (11 Nov): tidak ada temuan tinggi; satu sedang dan tiga rendah dikerjakan di branch ini** (tes gagal lebih dulu atau uji mutasi; `app/tests/test_privat_ruang_usaha_review.py`). Reviewer menilai dari diff, tanpa membaca deskripsi PR dan entri ini lebih dulu. Jalur utama dinilai benar: tidak ada jalur HTTP yang masih menulis `is_private=True` di ruang usaha (tunggal, batch, kirim ulang `client_ref`, kirim ulang draf, persetujuan draf, Kotak Struk); jenis ruang selalu dari amplop (header dan `ruang_id` di body diabaikan, ke dua arah); penolakan tidak meninggalkan transaksi, draf, isian plugin, kunci idempotensi, atau klaim bukti.
+  1. **Sedang — lapis kedua isian plugin tidak lagi dikunci.** Sesudah T3 `test_plugin_u2` disesuaikan, `or req.is_private` (review #201 T3) bisa dicabut tanpa ada tes yang gagal (uji mutasi: 59 tes tetap lulus), padahal itu satu-satunya penjaga untuk plugin di ruang keluarga (`space_types`). Kini dikunci dengan lapis pertama dimatikan (`ruang_jenis` di `transactions.py` dipalsukan) → `field_tidak_sah`.
+  2. **Rendah — `confirm_pending` masih menyalin `is_private`.** Klaim "tidak ada penulis lain" keliru: baris tertunda lama bertanda privat di amplop ruang usaha dikonfirmasi privat. Tidak terjangkau hari ini (tidak ada pembuat baris tertunda sejak Pikir-Pikir Fase 0, bot selalu ruang keluarga), tetapi ini jalur tulis pengeluaran. Kini dicatat terbuka di ruang usaha (jenis ruang dari amplop); ruang keluarga tetap.
+  3. **Rendah — urutan di `/batch` berbeda dari `POST /transactions/`.** Cek privat berjalan sebelum amplop terbukti boleh dipakai, sehingga baris bertanda privat membedakan amplop pribadi anggota lain di ruang usaha (`privat_tidak_tersedia`) dari amplop yang tidak ada (`Envelope not found`). Cek dipindah ke sesudah amplop dan `is_spendable`, sama dengan jalur tunggal.
+  4. **Rendah — kabel route → `_after_saved(is_private=…)` tidak lagi dikunci** (`test_ruang_r7` kini hanya mengunci hook-nya; mutasi `is_private=False` di kedua route lulus). Kini dikunci lewat route, tunggal dan batch, dengan lapis pertama dimatikan dan kontrol catatan terbuka.
+  5. Pagar baru: pembuatan `Transaction` / `PendingTransaction` / `RuangDraf` dengan `is_private` selain `False` harus terdaftar di `PENULIS_PRIVAT` (bot, chat web, langganan, advisor, dan cocokkan saldo tidak pernah mengisinya; bawaan model `False`).
+
+**Jebakan**
+- Antrean offline lama yang menyimpan baris privat di ruang usaha akan gagal per baris dengan pesan "tidak bisa privat". Pusat antrean offline hanya bisa mengganti amplop, mencoba lagi, atau menghapus (tidak bisa mencabut tanda privat), jadi barisnya harus dihapus lalu dicatat ulang; tidak diubah di PR ini (bukan temuan keamanan, perlu keputusan tampilan).
+- Bot dan chat web tidak tersentuh: chat selalu ruang keluarga.
+
+**Cara melanjutkan**
+- Sesi review baru: "review PR #205 terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`.
+- U3 (#204) di-merge lebih dulu (11 Nov); bentrok SESI-LOG diselesaikan dengan menggabungkan `main`, kedua entri disimpan.
+
+---
+
 ## U3 · Laba rugi dan laporan · 2026-11-10 · pemilik produk + Claude
 
 **Selesai** (branch `plugin/u3-laba-rugi`; PR #204; tanpa migrasi; Plugin API 1.4; manifest Buku Usaha 0.3.0)

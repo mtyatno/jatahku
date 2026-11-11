@@ -27,7 +27,7 @@ import pathlib
 import unittest
 from datetime import datetime, timedelta
 from decimal import Decimal as D
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 from app.plugins.buku_usaha import alokasi as al
@@ -736,7 +736,15 @@ class U2DbTests(unittest.IsolatedAsyncioTestCase):
         sebelum = await self.hitung(Transaction)
         r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, envelope=self.pribadi)
         self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
+        # Sejak 11 Nov ruang usaha tidak punya pengeluaran privat: ditolak lebih dulu (test_privat_ruang_usaha.py);
+        # penolakan isian untuk `is_private` di `transactions.py` tetap ada sebagai lapis kedua.
         r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, is_private=True)
+        self.assertEqual((r.status_code, self.kode(r)), (422, "privat_tidak_tersedia"))
+        # Lapis kedua tetap dikunci (review keamanan #205): dengan penolakan privat dimatikan (jenis ruang yang dibaca
+        # `transactions.py` dipalsukan), isian plugin untuk catatan privat tetap ditolak. Tanpa ini `or req.is_private`
+        # bisa hilang tanpa ada tes yang gagal, padahal plugin boleh dipasang di ruang keluarga (`space_types`).
+        with patch("app.api.routes.transactions.ruang_jenis", AsyncMock(return_value="rumah_tangga")):
+            r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, is_private=True)
         self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
         self.assertEqual(await self.hitung(Transaction), sebelum)
         self.assertEqual(await self.hitung(BukuUsahaTxnMeta), 0)
