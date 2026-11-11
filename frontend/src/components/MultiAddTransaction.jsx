@@ -205,7 +205,8 @@ function ItemRow({ item, envelopes, periodStart, onChangeEnvelope, onChangeField
 // initialPhoto: File dari pintu masuk "Foto struk" (FAB / pemulihan) → dibaca sekali saat dibuka.
 // photoMode 'ready': dibuka dari shortcut PWA → tombol besar "Ambil foto struk" di atas isian.
 // `isianPlugin` (Plugin U2): field Fitur Tambahan transaksi, diteruskan ke form satu per satu (QuickAddTransaction).
-export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = null, photoMode = null, isianPlugin = [] }) {
+export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = null, photoMode = null, isianPlugin = [],
+  ruangUsaha = false }) {
   const [rawText, setRawText] = useState('');
   const [items, setItems] = useState([]);
   const [envelopes, setEnvelopes] = useState([]);
@@ -889,6 +890,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
             <QuickAddTransaction
               key={singleFormKey}
               isianPlugin={isianPlugin}
+              ruangUsaha={ruangUsaha}
               onSaved={(info) => {
                 setSingleFormKey(k => k + 1);
                 if (info?.quotaNotice) setResultMsg({ type: 'mixed', text: info.quotaNotice });

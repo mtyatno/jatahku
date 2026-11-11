@@ -20,3 +20,9 @@ test('hidden when envelope is personal (owned)', () => {
 test('hidden when no envelope selected', () => {
   assert.equal(shouldShowPrivateToggle(3, null), false);
 });
+
+test('hidden in a business room for every role (decision 11 Nov 2026)', () => {
+  assert.equal(shouldShowPrivateToggle(5, shared, { ruangUsaha: true }), false);
+  assert.equal(shouldShowPrivateToggle(5, shared, { ruangUsaha: false }), true);
+  assert.equal(shouldShowPrivateToggle(5, shared, {}), true);
+});

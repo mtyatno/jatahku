@@ -133,8 +133,15 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
     async def test_tidak_belajar_dari_privat_pribadi_keluarga_dan_bot(self):
         """Gerbang "Ruang keluarga tetap pribadi": kamus ruang terlihat admin, jadi catatan privat dan amplop pribadi
         tidak mengajarinya; ruang keluarga dan bot tidak pernah menulisnya."""
+        # Sejak 11 Nov ruang usaha tidak punya pengeluaran privat lewat web (test_privat_ruang_usaha.py). Hook
+        # sesudah-simpan tetap tidak mengajari kamus ruang dari catatan privat (lapis kedua, mis. data lama).
         r = await self._catat(self.me, self.op_id, "rahasia pribadi", is_private=True)
-        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((r.status_code, r.json().get("kode")), (422, "privat_tidak_tersedia"), r.text)
+        async with self.Session() as db:
+            from app.api.routes.transactions import _after_saved
+            me = await db.get(type(self.me), self.me.id)
+            await _after_saved(db, me, None, transaction_id=uuid.uuid4(), envelope_id=self.op_id,
+                               description="rahasia pribadi", is_private=True)
         async with self.Session() as db:
             pribadi = Envelope(household_id=self.nusa_id, name="Uang saku Saya", emoji="👛",
                                budget_amount=D("0"), owner_id=self.me.id)

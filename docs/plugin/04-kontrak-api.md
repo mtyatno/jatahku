@@ -593,11 +593,17 @@ Tanpa endpoint baru; bentuk untuk plugin (`app/plugins/host/ringkas.py`, `Plugin
 
 - Rute **GET** boleh mengembalikan `Laporan(format: "pdf"|"csv", nama_berkas, judul, subjudul, ringkasan: ((label,
   nilai), …), tabel: (TabelLaporan(judul, kolom, baris, total?, catatan?), …), catatan: (…))`. Sel: teks, `Decimal`
-  (rupiah), `int`, `date`, atau `null`. Batas: 12 tabel, 8 kolom, 5.000 baris total, 12 ringkasan, 10 catatan; bentuk
-  lain atau `Laporan` dari rute non-GET → 500 `plugin_gagal`.
+  (rupiah), `int`, `date`, atau `null`. Batas: 12 tabel, 8 kolom, 5.000 baris total, 12 ringkasan, 10 catatan; angka
+  sel terhingga, |nilai| < 10^18, paling banyak 12 angka di belakang koma (review #204); bentuk lain, galat saat
+  menggambar, atau `Laporan` dari rute non-GET → 500 `plugin_gagal`.
 - Host menggambar (`app/plugins/host/berkas.py`): **PDF** A4 fpdf2 Noto Sans (teks PDF, bukan HTML; karakter di luar font
   dibuang), tanpa kata sandi; **CSV** UTF-8 + BOM, sel teks lewat anti formula-injection PR #136, angka apa adanya
-  (`"1234.50"`, negatif tetap angka), tanggal ISO, baris kedua `Ruang,<nama>`.
+  (`"1234.50"`, negatif tetap angka), tanggal ISO, baris kedua `Ruang,<nama>`. Review #204: karakter rumus sesudah `;`
+  di dalam teks juga diberi kutip (`ayam;=1+1` → `ayam;'=1+1`), karena Excel berpemisah daftar `;` (bawaan regional
+  Indonesia) memecah baris berkoma pada `;`.
+- **Batas dan urutan (review #204):** paling banyak 10 berkas laporan per menit per user, PDF dan CSV satu ember →
+  `429 {"kode": "terlalu_sering"}` tanpa menggambar dan tanpa audit. Sesudah lolos batas: audit, lalu koneksi database
+  permintaan dilepas, baru berkas digambar (PDF mengantre semafor dua slot bersama laporan berkala).
 - Jawaban `200` dengan `Content-Type` `application/pdf` / `text/csv; charset=utf-8`, `Content-Disposition: attachment;
   filename="jatahku-<nama dirapikan>.<ext>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`,
   `Content-Security-Policy: default-src 'none'; sandbox`. Setiap unduhan diaudit `laporan` (`format`, `rute`; tanpa
@@ -718,6 +724,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |
 | `perlu_persetujuan` | 202 | Di atas `batas_nominal`; draf dibuat, belum menjadi transaksi |
+| `privat_tidak_tersedia` | 422 / per baris | Pengeluaran bertanda privat (`is_private: true`) di ruang usaha, untuk semua peran (`POST /transactions/`, per baris di `/batch`); tidak ada yang dicatat (keputusan 11 Nov 2026) |
 | `client_ref_bentrok` | 409 / per baris | `client_ref` sudah dipakai catatan lain (ruang, jenis, atau amplop berbeda); tidak ada yang dicatat (R7, review keamanan #191) |
 | `jendela_ubah_lewat` | 403 | Mengubah atau menghapus catatan di luar jendela |
 | `butuh_paket_usaha` | 402 | Ruang usaha tanpa hak Paket Usaha (ADR-P13) |
@@ -740,6 +747,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `izin_wajib` | 422 | `POST …/izin` tanpa daftar izin (U2, §5); pasang/pulihkan plugin berizin tulis tanpa daftar izin (review #201) |
 | `sedang_diproses` | 409 | Pemasukan plugin dengan `client_ref` yang sama masih diproses (review #201, §5) |
 | `format_tidak_dikenal` | 422 | `GET /p/buku_usaha/laporan` dengan format selain pdf/csv (U3, §6) |
+| `terlalu_sering` | 429 | Lebih dari 10 berkas laporan plugin per menit oleh satu user (review #204, §5 "Berkas laporan dari rute") |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |

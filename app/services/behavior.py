@@ -4,7 +4,8 @@ from uuid import UUID
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import (
-    Envelope, Transaction, PendingTransaction, PendingTransactionStatus, TransactionSource
+    Envelope, Household, HouseholdType, Transaction, PendingTransaction, PendingTransactionStatus,
+    TransactionSource
 )
 from app.core.period import get_budget_period, get_previous_period
 
@@ -251,6 +252,14 @@ async def confirm_pending(pending_id: UUID, db: AsyncSession) -> dict:
         minutes = int((remaining.total_seconds() % 3600) // 60)
         return {"error": f"Cooling period belum selesai. Tunggu {hours}j {minutes}m lagi."}
 
+    # Ruang usaha tidak punya pengeluaran privat (AGENTS.md, Kontrak visibilitas; review keamanan #205): baris tertunda
+    # lama bertanda privat di amplop ruang usaha dicatat terbuka. Jenis ruang dari amplopnya.
+    jenis_ruang = (await db.execute(
+        select(Household.type).join(Envelope, Envelope.household_id == Household.id)
+        .where(Envelope.id == pending.envelope_id)
+    )).scalar_one_or_none()
+    is_private = bool(pending.is_private) and str(jenis_ruang) != HouseholdType.USAHA
+
     # Create actual transaction
     txn = Transaction(
         envelope_id=pending.envelope_id,
@@ -259,7 +268,7 @@ async def confirm_pending(pending_id: UUID, db: AsyncSession) -> dict:
         description=pending.description,
         source=pending.source,
         transaction_date=date.today(),
-        is_private=pending.is_private,
+        is_private=is_private,
     )
     db.add(txn)
     pending.status = PendingTransactionStatus.confirmed

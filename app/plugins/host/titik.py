@@ -792,7 +792,9 @@ MAKS_QUERY_RUTE = 20
 class HasilRute:
     status: int
     data: Any
-    berkas: Any = None            # U3: `berkas.Berkas` bila rute GET mengembalikan `Laporan`
+    # U3: `berkas.Pesanan` bila rute GET mengembalikan `Laporan`: sudah diperiksa, belum digambar. Route menggambarnya
+    # sesudah membatasi frekuensi, mengaudit, dan melepas koneksi database (review #204 S1).
+    laporan: Any = None
 
 
 def _cocok_pola(pola: str, path: str) -> dict[str, str] | None:
@@ -900,12 +902,12 @@ async def jalankan_rute(db, user, household_id, plugin_id: str, metode: str, pat
             raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
                                status_code=500)
         try:
-            b = await berkas_host.buat(hasil, ruang=ruang.name or "", sekarang=datetime.now(_tz(user)))
+            pesanan = berkas_host.pesan(hasil, ruang=ruang.name or "", sekarang=datetime.now(_tz(user)))
         except (TypeError, ValueError):
             log.exception("rute plugin %s '%s' mengembalikan laporan yang tidak sah", m.id, d.kunci)
             raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
                                status_code=500)
-        return HasilRute(status=200, data=None, berkas=b)
+        return HasilRute(status=200, data=None, laporan=pesanan)
     status = 200
     if isinstance(hasil, Jawaban):
         status, hasil = int(hasil.status), hasil.data

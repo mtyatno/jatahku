@@ -415,9 +415,11 @@ async def setujui_draf(rid: UUID, draf_id: UUID, user: User = Depends(get_curren
             if jenis == peran.JENIS_PENGELUARAN:
                 from app.api.routes.transactions import TransactionCreate, catat_transaksi
                 from app.models.models import TransactionSource
+                # Ruang usaha tanpa pengeluaran privat (11 Nov): draf lama bertanda privat (data uji coba) disetujui
+                # sebagai pengeluaran biasa; admin sudah melihat keterangannya di antrean persetujuan.
                 req = TransactionCreate(
                     envelope_id=d.envelope_id, amount=d.amount, description=d.description,
-                    source=TransactionSource(d.source), transaction_date=d.tanggal, is_private=d.is_private,
+                    source=TransactionSource(d.source), transaction_date=d.tanggal, is_private=False,
                     client_ref=d.client_ref, receipt_item_id=d.receipt_item_id)
                 res = await catat_transaksi(req, pencatat, db)
             else:
