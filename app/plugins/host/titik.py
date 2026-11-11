@@ -39,8 +39,8 @@ from app.plugins.host import keadaan
 from app.plugins.host.kode import IZIN_PER_JENIS
 from app.plugins.host.keadaan import catat_audit, sesi
 from app.plugins.sdk.context import (
-    AksiRoute, GalatRute, IzinDitolak, Jawaban, NilaiTidakSah, PenggunaView, PeriodeView, Permintaan, PluginContext,
-    RencanaPengeluaran, Saran,
+    AksiRoute, GalatRute, IzinDitolak, Jawaban, Laporan, NilaiTidakSah, PenggunaView, PeriodeView, Permintaan,
+    PluginContext, RencanaPengeluaran, Saran,
 )
 from app.plugins.sdk.plugin import Pendaftaran
 
@@ -792,6 +792,7 @@ MAKS_QUERY_RUTE = 20
 class HasilRute:
     status: int
     data: Any
+    berkas: Any = None            # U3: `berkas.Berkas` bila rute GET mengembalikan `Laporan`
 
 
 def _cocok_pola(pola: str, path: str) -> dict[str, str] | None:
@@ -891,6 +892,20 @@ async def jalankan_rute(db, user, household_id, plugin_id: str, metode: str, pat
                            status_code=500)
     finally:
         _waktu(mulai, m, d)
+    if type(hasil) is Laporan:
+        # U3: berkas unduhan digambar host (PDF/CSV), hanya dari rute GET (membaca, tidak menulis).
+        from app.plugins.host import berkas as berkas_host
+        if metode != "GET":
+            log.error("rute plugin %s '%s': Laporan hanya dari rute GET", m.id, d.kunci)
+            raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
+                               status_code=500)
+        try:
+            b = await berkas_host.buat(hasil, ruang=ruang.name or "", sekarang=datetime.now(_tz(user)))
+        except (TypeError, ValueError):
+            log.exception("rute plugin %s '%s' mengembalikan laporan yang tidak sah", m.id, d.kunci)
+            raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
+                               status_code=500)
+        return HasilRute(status=200, data=None, berkas=b)
     status = 200
     if isinstance(hasil, Jawaban):
         status, hasil = int(hasil.status), hasil.data

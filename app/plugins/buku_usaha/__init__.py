@@ -8,10 +8,16 @@ fungsi `pengaturan` hanya melaporkan amplop mana yang sudah ada.
 U2: aturan alokasi omzet (`/alokasi`), pratinjau dan pencatatan pemasukan usaha per jenis (`/penjualan`; pemasukan inti
 lewat `ctx.catat_pemasukan`, `incomes:write`, satu commit dengan `income_meta`), dan field Pemasok + Akun beban di form
 pengeluaran inti (`field_form` + `simpan_field` → `txn_meta`). Pembagian dihitung `alokasi.bagi` (pembantu murni).
+
+U3: laba rugi per bulan kalender (`/laba-rugi`, angka dari `metrics.py`) dan laporan PDF/CSV (`/laporan`: plugin menyusun
+`Laporan` di `laporan.py`, host menggambarnya). Butuh izin baca `transactions:read` + `incomes:read` (izin baru untuk
+instalasi lama, disetujui lewat `POST …/izin`).
 """
 import re
 
 from app.plugins.buku_usaha import alokasi as al
+from app.plugins.buku_usaha import laporan as lap
+from app.plugins.buku_usaha import metrics
 from app.plugins.sdk import GalatRute, Jawaban, NilaiTidakSah, Plugin
 
 plugin = Plugin("buku_usaha")
@@ -350,3 +356,27 @@ async def simpan_field_pengeluaran(ctx, transaction_id, nilai):
     """Satu baris `txn_meta` per transaksi (unik di antara baris hidup), di commit yang sama dengan transaksinya."""
     await ctx.data("txn_meta").tambah({"transaction_id": transaction_id, "kontak_id": nilai.get("pemasok"),
                                        "akun": nilai.get("akun")})
+
+
+# ── U3: laba rugi dan laporan ────────────────────────────────────────────
+FORMAT_LAPORAN = ("pdf", "csv")
+
+
+@plugin.rute("GET", "/laba-rugi", izin=["transactions:read", "incomes:read"])
+async def laba_rugi(ctx, req):
+    """Laba rugi satu bulan kalender (`?periode=YYYY-MM`, bawaan bulan ini) dan banding bulan sebelumnya."""
+    hari = metrics.hari_ini(ctx)
+    th, bl = metrics.periode(req.query.get("periode"), hari)
+    return await metrics.laba_rugi(ctx, th, bl, hari)
+
+
+@plugin.rute("GET", "/laporan", izin=["envelopes:read", "transactions:read", "incomes:read"])
+async def unduh_laporan(ctx, req):
+    """Laporan laba rugi satu bulan sebagai berkas (`?periode=YYYY-MM&format=pdf|csv`); host menggambar dan
+    mengirimnya sebagai lampiran."""
+    fmt = req.query.get("format") or "pdf"
+    if fmt not in FORMAT_LAPORAN:
+        raise GalatRute(422, "format_tidak_dikenal", "Format laporan harus pdf atau csv.")
+    hari = metrics.hari_ini(ctx)
+    th, bl = metrics.periode(req.query.get("periode"), hari)
+    return await lap.laba_rugi(ctx, th, bl, fmt, hari)

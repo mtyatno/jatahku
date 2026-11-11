@@ -101,7 +101,8 @@ class ManifestU2Tests(unittest.TestCase):
     def test_manifest_buku_usaha(self):
         reg = muat(FOLDER_BU.parent, ketat=True)
         m = reg.get("buku_usaha")
-        self.assertEqual(m.permissions, ["envelopes:read", "incomes:write"])
+        self.assertEqual(m.permissions, MANIFEST_BU["permissions"])     # U3 menambah izin baca
+        self.assertIn("incomes:write", m.permissions)
         self.assertEqual([a.key for a in m.contributes.quick_actions], ["buku_usaha.penjualan"])
         f = {x.key: x for x in m.contributes.form_fields}
         self.assertEqual(f["pemasok"].entity, "p_buku_usaha_kontak")
@@ -327,7 +328,8 @@ class U2DbTests(unittest.IsolatedAsyncioTestCase):
             inst.granted_permissions = ["envelopes:read"]
             await db.commit()
         await self.atur_a3()
-        self.assertEqual((await self.katalog())["buku_usaha"]["izin_baru"], ["incomes:write"])
+        self.assertEqual((await self.katalog())["buku_usaha"]["izin_baru"],
+                         [x for x in MANIFEST_BU["permissions"] if x != "envelopes:read"])
         r = await self.p("POST", "/penjualan", status=403, json={"jumlah": 100000})
         self.assertEqual(self.kode(r), "tanpa_izin")
         self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 0)
