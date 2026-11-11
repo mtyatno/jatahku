@@ -33,7 +33,9 @@ JENIS = {
     "field_form": "form_fields",
     "rute": "routes",            # U1: endpoint plugin `/p/<id>/…`
     "simpan_field": "form_fields",   # U2: simpan isian form plugin sesudah catatan inti dibuat (opsional per target)
+    "kontak_catatan": "nlp_kontak",  # U5: kontak yang disebut di teks Catat cepat (satu fungsi per plugin)
 }
+KUNCI_KONTAK_CATATAN = "kontak"
 METODE_RUTE = ("GET", "POST", "PATCH", "PUT", "DELETE")
 
 
@@ -108,6 +110,12 @@ class Plugin(metaclass=_KelasBeku):
         bersih}` dari `field_form`) untuk catatan inti `target` yang baru dibuat (mis. transaksi), lewat `ctx.data()`,
         di commit yang sama dengan catatannya. Galat (`NilaiTidakSah` atau lainnya) membatalkan catatan intinya."""
         return self._dekor("simpan_field", target, izin)
+
+    def kontak_catatan(self, *, izin=()):
+        """`async fn(ctx, teks: str, peran: str) -> KontakCatatan | None` (U5, manifest `nlp_kontak`): kontak plugin
+        berperan `peran` yang disebut di teks Catat cepat, dari tabel plugin sendiri (`ctx.data()`). Hanya dipanggil
+        untuk pemilik dan admin; hasilnya diperiksa host dan hanya tampil sebagai saran di kartu Terdeteksi."""
+        return self._dekor("kontak_catatan", KUNCI_KONTAK_CATATAN, izin)
 
     def rute(self, metode: str, pola: str, *, izin=()):
         """`async fn(ctx, Permintaan) -> data JSON | Jawaban` untuk `<metode> /p/<id><pola>` (U1). Pola seperti

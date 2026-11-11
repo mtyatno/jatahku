@@ -239,7 +239,7 @@ class ManifestKartuTests(unittest.TestCase):
             self._kartu(untuk="admin")
 
     def test_plugin_api_1_5(self):
-        self.assertEqual(mf.PLUGIN_API_VERSION[:2], (1, 5))
+        self.assertGreaterEqual(mf.PLUGIN_API_VERSION[:2], (1, 5))      # hanya bertambah (U5: 1.6)
 
 
 # ── 1b. host/SDK dengan database ─────────────────────────────────────────

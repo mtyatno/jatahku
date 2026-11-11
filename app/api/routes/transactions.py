@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -109,6 +109,9 @@ class SuggestEnvelopeRequest(BaseModel):
     description: str = Field(max_length=SARAN_TEKS_MAKS)
     # R7 (opsional): nominal yang sudah diurai klien (parseAmount.js), untuk `aturan` batasan karyawan.
     amount: Decimal | None = Field(default=None, ge=0)
+    # U5 (opsional): jenis catatan yang sedang dipilih user di Catat cepat; menentukan peran kontak yang dicari
+    # (pengeluaran → pemasok, penjualan → pelanggan). Tanpa ini: jenis terdeteksi, lalu pengeluaran.
+    jenis: Literal["pengeluaran", "penjualan"] | None = None
 
 
 class BatchSuggestEnvelopeRequest(BaseModel):
@@ -470,19 +473,25 @@ async def suggest_envelope(
 ):
     """Saran amplop untuk Catat (ruang dari header: saran tidak menulis apa pun). R7: urutan kata user → kamus ruang
     usaha → kamus kategori (`txn_nlp.cari_amplop`); karyawan hanya mendapat amplop yang diizinkan, dan `aturan`
-    batasannya untuk `amount`. Field lama tetap."""
+    batasannya untuk `amount`. U5: `jenis_catatan` dan `kontak` (`titik.deteksi_catatan`). Field lama tetap."""
+    from app.plugins.host import titik
     from app.services.txn_nlp import cari_amplop
     batasan = await peran.batasan_karyawan(db, user.id, hid) if hid else None
     aturan = peran.aturan_catatan(batasan, req.amount)
     if not hid or not req.description.strip():
-        return {**_SARAN_KOSONG, "aturan": aturan}
+        return {**_SARAN_KOSONG, **titik.TIDAK_TERDETEKSI, "aturan": aturan}
+    # U5: jenis catatan dan kontak dari Fitur Tambahan yang aktif di ruang ini (tanpa plugin: tanpa kueri). Karyawan
+    # tidak pernah mendapat kontak (host), dan jenis hanya yang boleh ia catat (batasannya).
+    deteksi = await titik.deteksi_catatan(db, user, hid, req.description, jenis=req.jenis)
+    if batasan is not None and deteksi["jenis_catatan"] not in batasan.jenis_catatan:
+        deteksi = {**deteksi, "jenis_catatan": None}
     boleh = batasan.amplop_ids if batasan is not None else None
     t = await cari_amplop(req.description, hid, db, user.id, amplop_boleh=boleh)
     envelope = t.envelope
     if not envelope or (batasan is not None and not batasan.boleh_amplop(envelope.id)):
-        return {**_SARAN_KOSONG, "aturan": aturan}
+        return {**_SARAN_KOSONG, **deteksi, "aturan": aturan}
     return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(t.confident),
-            "sumber": await _sumber_api(db, user, t, karyawan=batasan is not None), "aturan": aturan}
+            "sumber": await _sumber_api(db, user, t, karyawan=batasan is not None), **deteksi, "aturan": aturan}
 
 
 @router.post("/suggest-envelopes")

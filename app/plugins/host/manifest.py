@@ -31,7 +31,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # 1.5 (U4): kelompok `tanggal` di baca agregat, `ctx.envelopes(saldo=True)` (`AmplopView.sisa`), kartu `untuk:
 #           "karyawan"` (Beranda karyawan), dan `ctx.ringkas_pemasukan_saya` (hanya catatan milik viewer; satu-satunya
 #           baca keuangan yang terbuka untuk karyawan).
-PLUGIN_API_VERSION = (1, 5, 0)
+# 1.6 (U5): deteksi catatan di Catat cepat: `contributes.nlp_jenis` (kata → jenis catatan, cukup data di manifest,
+#           dicocokkan host sebagai kata utuh) dan `contributes.nlp_kontak` + `@plugin.kontak_catatan` (kontak yang
+#           disebut di teks; hanya dipanggil untuk pemilik dan admin).
+PLUGIN_API_VERSION = (1, 6, 0)
+
+# Jenis catatan yang boleh dideteksi kamus plugin (`nlp_jenis`). Pengeluaran adalah bawaan Catat cepat, bukan deteksi.
+JENIS_CATATAN = ("penjualan", "modal", "pinjaman")
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")
@@ -263,6 +269,10 @@ class Kontribusi(_Ketat):
     # H2: kamus Catat cepat, kategori (nama amplop tebakan) → kata. Hanya aktif di ruang yang memasang plugin
     # (`txn_nlp.find_best_envelope`), dicoba sebelum kamus kategori inti; tidak pernah dipakai lintas ruang.
     nlp_kamus: dict[str, list[str]] = {}
+    # U5: kata atau frasa → jenis catatan (`JENIS_CATATAN`); urutan di manifest = urutan periksa.
+    nlp_jenis: dict[str, list[str]] = {}
+    # U5: True = plugin punya `@plugin.kontak_catatan` (kontak yang disebut di teks Catat cepat).
+    nlp_kontak: bool = False
 
     @field_validator("advisor_rules")
     @classmethod
@@ -282,6 +292,19 @@ class Kontribusi(_Ketat):
                 raise ValueError(f"cek '{k}' harus huruf kecil/angka/garis bawah")
         if len(set(v)) != len(v):
             raise ValueError("cek ganda")
+        return v
+
+    @field_validator("nlp_jenis")
+    @classmethod
+    def _jenis(cls, v):
+        for jenis, kata in v.items():
+            if jenis not in JENIS_CATATAN:
+                raise ValueError(f"nlp_jenis '{jenis}' harus salah satu dari {JENIS_CATATAN}")
+            if not kata or len(kata) > 100:
+                raise ValueError(f"nlp_jenis '{jenis}': 1–100 kata")
+            for k in kata:
+                if not re.match(r"^[a-z0-9][a-z0-9 ]{1,39}$", k):
+                    raise ValueError(f"nlp_jenis '{jenis}': kata '{k}' harus huruf kecil/angka, 2–40 karakter")
         return v
 
     @field_validator("nlp_kamus")

@@ -21,10 +21,11 @@ import re
 
 from app.plugins.buku_usaha import alokasi as al
 from app.plugins.buku_usaha import aturan
+from app.plugins.buku_usaha import kamus
 from app.plugins.buku_usaha import kartu as bentuk
 from app.plugins.buku_usaha import laporan as lap
 from app.plugins.buku_usaha import metrics
-from app.plugins.sdk import GalatRute, Jawaban, NilaiTidakSah, Plugin
+from app.plugins.sdk import GalatRute, Jawaban, KontakCatatan, NilaiTidakSah, Plugin
 
 plugin = Plugin("buku_usaha")
 
@@ -482,3 +483,15 @@ async def saran_pajak(ctx):
         return []
     hari = metrics.hari_ini(ctx)
     return aturan.bu03(pajak, await metrics.laba_rugi(ctx, hari.year, hari.month, hari))
+
+
+# ── U5: kontak di teks Catat cepat ───────────────────────────────────────
+@plugin.kontak_catatan()
+async def kontak_catatan(ctx, teks, peran):
+    """Pelanggan atau pemasok ruang ini yang disebut di teks Catat cepat. Host hanya memanggilnya untuk pemilik dan
+    admin; daftar kontak hanya dari ruang konteks (`ctx.data()`), dan hasilnya hanya saran di kartu Terdeteksi."""
+    if peran not in PERAN_KONTAK:
+        return None
+    daftar = await ctx.data("kontak").cari(saring={"peran": peran}, urut=("-updated_at",), batas=kamus.BATAS_KONTAK)
+    k = kamus.cocok_kontak(teks, daftar)
+    return KontakCatatan(id=str(k["id"]), nama=k["nama"], peran=k["peran"]) if k is not None else None

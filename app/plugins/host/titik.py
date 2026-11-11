@@ -39,10 +39,10 @@ from app.plugins.host import keadaan
 from app.plugins.host.kode import IZIN_PER_JENIS
 from app.plugins.host.keadaan import catat_audit, sesi
 from app.plugins.sdk.context import (
-    AksiRoute, GalatRute, IzinDitolak, Jawaban, Laporan, NilaiTidakSah, PenggunaView, PeriodeView, Permintaan,
-    PluginContext, RencanaPengeluaran, Saran,
+    AksiRoute, GalatRute, IzinDitolak, Jawaban, KontakCatatan, Laporan, NilaiTidakSah, PenggunaView, PeriodeView,
+    Permintaan, PluginContext, RencanaPengeluaran, Saran,
 )
-from app.plugins.sdk.plugin import Pendaftaran
+from app.plugins.sdk.plugin import KUNCI_KONTAK_CATATAN, Pendaftaran
 
 log = logging.getLogger("jatahku.plugins")
 
@@ -681,6 +681,98 @@ def tebak_kamus(kamus: list[tuple[str, list[str]]], deskripsi: str) -> str | Non
         if any(k in desc for k in kata):
             return kategori
     return None
+
+
+# ── deteksi catatan (U5; saran Catat cepat, `POST /transactions/suggest-envelope`) ──────────
+# Peran kontak yang dicari untuk tiap jenis catatan. Modal dan pinjaman tidak punya kontak.
+PERAN_KONTAK = {"pengeluaran": "pemasok", "penjualan": "pelanggan"}
+JENIS_KARYAWAN = ("penjualan",)     # modal dan pinjaman bukan catatan karyawan
+_ID_KONTAK = r"[A-Za-z0-9][A-Za-z0-9\-]{0,63}"
+TIDAK_TERDETEKSI = {"jenis_catatan": None, "kontak": None}
+
+
+def ada_deteksi() -> bool:
+    return any(m.contributes.nlp_jenis or m.contributes.nlp_kontak for m in registry().plugins.values())
+
+
+def tebak_jenis(kamus: list[tuple[str, list[str]]], teks: str | None) -> str | None:
+    """Jenis catatan dari kata atau frasa **utuh** di teks (bukan potongan kata: "jualan" bukan "jual"); spasi
+    berlebih diabaikan. Urutan kamus = urutan periksa."""
+    rapi = " ".join((teks or "").lower().split())
+    if not rapi:
+        return None
+    for jenis, kata in kamus:
+        for k in kata:
+            if re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", rapi):
+                return jenis
+    return None
+
+
+def rapikan_kontak(v, peran: str) -> dict | None:
+    """Keluaran `@plugin.kontak_catatan` → `{"id", "nama", "peran"}`; None = tidak ada kontak yang disebut."""
+    if v is None:
+        return None
+    if not isinstance(v, KontakCatatan):
+        raise KeluaranTidakSah("kontak_catatan harus mengembalikan KontakCatatan atau None")
+    if not isinstance(v.id, str) or not re.fullmatch(_ID_KONTAK, v.id):
+        raise KeluaranTidakSah("id kontak tidak sah")
+    if v.peran != peran:
+        raise KeluaranTidakSah("peran kontak bukan yang diminta")
+    nama = " ".join(_teks(v.nama, 120, boleh_kosong=False).split())
+    if not nama:
+        raise KeluaranTidakSah("nama kontak kosong")
+    return {"id": v.id, "nama": nama, "peran": peran}
+
+
+async def deteksi_catatan(db, user, household_id, teks: str, *, jenis: str | None = None) -> dict:
+    """`{"jenis_catatan", "kontak"}` untuk teks Catat cepat di ruang ini. Tidak pernah melempar.
+
+    - `jenis_catatan`: dari `nlp_jenis` plugin yang aktif di ruang ini untuk user ini (kata utuh), atau None.
+      Karyawan hanya mendapat jenis di `JENIS_KARYAWAN`; route masih menyaringnya dengan batasan karyawan itu.
+    - `kontak`: dari `@plugin.kontak_catatan`, **hanya untuk pemilik dan admin** (keputusan B U5; karyawan tidak
+      membaca data plugin, ADR-P3). Peran kontak mengikuti jenis yang berlaku: pilihan user (`jenis`), lalu jenis
+      terdeteksi, lalu pengeluaran.
+    Tanpa plugin yang menyumbang deteksi: kembali seketika tanpa kueri."""
+    if household_id is None or user is None or not (teks or "").strip() or not ada_deteksi():
+        return dict(TIDAK_TERDETEKSI)
+    try:
+        terpasang = await siklus.aktif_dengan_instalasi(db, household_id, user.id)
+        if not terpasang:                               # ruang tanpa plugin aktif (mis. ruang keluarga): selesai
+            return dict(TIDAK_TERDETEKSI)
+        ruang = await _ruang(db, household_id)
+        peran = await _peran(db, user.id, household_id)
+        if ruang is None or peran is None:
+            return dict(TIDAK_TERDETEKSI)
+        karyawan = _karyawan(ruang.type, peran)
+        kamus = [pasangan for m, _ in terpasang for pasangan in m.contributes.nlp_jenis.items()]
+        terdeteksi = tebak_jenis(kamus, teks)
+        if karyawan and terdeteksi not in JENIS_KARYAWAN:
+            terdeteksi = None
+        hasil = {"jenis_catatan": terdeteksi, "kontak": None}
+        peran_kontak = PERAN_KONTAK.get(jenis or terdeteksi or "pengeluaran")
+        if karyawan or peran_kontak is None:
+            return hasil
+        reg, aktif = registry(), []
+        for m, inst in terpasang:
+            kode = reg.kode_plugin(m.id) if m.contributes.nlp_kontak else None
+            d = kode.ambil("kontak_catatan", KUNCI_KONTAK_CATATAN) if kode is not None else None
+            if d is not None:
+                aktif.append(_Aktif(m, inst, d))
+    except Exception:
+        log.exception("deteksi catatan: gagal menyiapkan")
+        return dict(TIDAK_TERDETEKSI)
+    for a in aktif:
+        ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber="kontak_catatan")
+        mulai = time.perf_counter()
+        try:
+            hasil["kontak"] = rapikan_kontak(await panggil(ctx, a.d.fn, teks, peran_kontak), peran_kontak)
+        except Exception:
+            log.exception("kontak_catatan plugin %s gagal", a.m.id)
+        finally:
+            _waktu(mulai, a.m, a.d)
+        if hasil["kontak"] is not None:
+            break
+    return hasil
 
 
 # ── form_fields (validasi H2; disimpan lewat simpan_field U2) ───────────────────────────────

@@ -5,6 +5,11 @@
 2. Aturan BU-01/02/03 (`buku_usaha/aturan.py`): fungsi murni angka → `Saran`, teks dari templat.
 3. Saran lewat host: pemilik mendapatnya dari data nyata, karyawan dan ruang lain tidak; paling banyak satu saran
    Buku Usaha di kartu AI Advisor.
+4. Deteksi catatan (Plugin API 1.6): manifest `nlp_jenis` + `nlp_kontak`, kata utuh, keluaran `@plugin.kontak_catatan`
+   diperiksa host.
+5. Kamus Buku Usaha (`buku_usaha/kamus.py`): pencocokan nama kontak (fungsi murni).
+6. `POST /transactions/suggest-envelope`: `jenis_catatan` dan `kontak`; karyawan hanya jenis yang diizinkan dan tidak
+   pernah kontak; ruang lain, ruang keluarga, dan plugin dijeda tidak mendapat apa pun.
 
 Run: python -m unittest app.tests.test_plugin_u5 -v
 """
@@ -17,14 +22,15 @@ import unittest
 from datetime import date, timedelta
 from decimal import Decimal as D
 
-from app.plugins.buku_usaha import aturan, metrics
+from app.plugins.buku_usaha import aturan, kamus, metrics
+from app.plugins.host import manifest as mf
 from app.plugins.host import titik
-from app.plugins.sdk import AmplopView, Saran
+from app.plugins.sdk import AmplopView, KontakCatatan, Saran
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 
 if HAS_AIOSQLITE:
-    from app.models.models import AppSetting
+    from app.models.models import AppSetting, BukuUsahaKontak, RuangBatasan
     from app.tests import test_plugin_u4 as u4
 
 
@@ -223,6 +229,235 @@ class SaranBukuUsahaTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
         adv_k = out.get("advisor") or {}
         semua = [i["aturan"] for i in adv_k.get("items", [])] + [s["id"] for s in adv_k.get("sisa", [])]
         self.assertEqual([k for k in semua if k.startswith("BU-")], [])
+
+
+# ── 4. deteksi catatan: manifest dan host ────────────────────────────────
+class ManifestDeteksiTests(unittest.TestCase):
+    def _kontribusi(self, **isi):
+        return mf.Kontribusi.model_validate(isi)
+
+    def test_nlp_jenis_dan_nlp_kontak_diterima(self):
+        c = self._kontribusi(nlp_jenis={"modal": ["setor modal"], "penjualan": ["jual", "terima pembayaran"]},
+                             nlp_kontak=True)
+        self.assertEqual(list(c.nlp_jenis), ["modal", "penjualan"])           # urutan manifest = urutan periksa
+        self.assertTrue(c.nlp_kontak)
+        kosong = self._kontribusi()
+        self.assertEqual((kosong.nlp_jenis, kosong.nlp_kontak), ({}, False))
+
+    def test_jenis_di_luar_daftar_ditolak(self):
+        for jenis in ("pengeluaran", "prive", "lain", "Penjualan"):
+            with self.assertRaises(ValueError, msg=jenis):
+                self._kontribusi(nlp_jenis={jenis: ["jual"]})
+
+    def test_kata_harus_huruf_kecil_dan_tidak_kosong(self):
+        for kata in ([], ["Jual"], ["j"], ["jual!"], ["x" * 41]):
+            with self.assertRaises(ValueError, msg=kata):
+                self._kontribusi(nlp_jenis={"penjualan": kata})
+
+    def test_versi_plugin_api(self):
+        self.assertGreaterEqual(mf.PLUGIN_API_VERSION[:2], (1, 6))
+        self.assertTrue(mf.cocok_rentang(">=1.6 <2.0"))
+
+
+class TebakJenisTests(unittest.TestCase):
+    KAMUS = [("modal", ["setor modal"]), ("pinjaman", ["terima pinjaman"]), ("penjualan", ["jual", "terima pembayaran"])]
+
+    def test_kata_dan_frasa_utuh(self):
+        self.assertEqual(titik.tebak_jenis(self.KAMUS, "Jual nasi box 30 pax 900rb"), "penjualan")
+        self.assertEqual(titik.tebak_jenis(self.KAMUS, "terima  pembayaran pt arunika"), "penjualan")
+        self.assertEqual(titik.tebak_jenis(self.KAMUS, "setor modal 5jt"), "modal")
+
+    def test_potongan_kata_tidak_cocok(self):
+        for teks in ("jualan gorengan", "dijual", "bayar cicilan pinjaman 500rb", "", None):
+            self.assertIsNone(titik.tebak_jenis(self.KAMUS, teks), teks)
+
+    def test_urutan_manifest_menang(self):
+        self.assertEqual(titik.tebak_jenis(self.KAMUS, "setor modal dari hasil jual motor"), "modal")
+
+
+class KeluaranKontakTests(unittest.TestCase):
+    def test_kontak_dirapikan(self):
+        k = KontakCatatan(id="7b1c2d3e-0000-4000-8000-000000000001", nama="  UD Sumber   Unggas ", peran="pemasok")
+        self.assertEqual(titik.rapikan_kontak(k, "pemasok"),
+                         {"id": "7b1c2d3e-0000-4000-8000-000000000001", "nama": "UD Sumber Unggas", "peran": "pemasok"})
+        self.assertIsNone(titik.rapikan_kontak(None, "pemasok"))
+
+    def test_keluaran_tidak_sah_ditolak(self):
+        ok = dict(id="a1", nama="Bu Sari", peran="pelanggan")
+        for salah in ({"id": "a1", "nama": "Bu Sari", "peran": "pelanggan"},           # bukan KontakCatatan
+                      KontakCatatan(**{**ok, "peran": "pemasok"}),                     # peran lain dari yang diminta
+                      KontakCatatan(**{**ok, "id": "../x"}), KontakCatatan(**{**ok, "id": ""}),
+                      KontakCatatan(**{**ok, "nama": ""}), KontakCatatan(**{**ok, "nama": "x" * 121}),
+                      KontakCatatan(**{**ok, "nama": 7})):
+            with self.assertRaises(titik.KeluaranTidakSah, msg=salah):
+                titik.rapikan_kontak(salah, "pelanggan")
+
+
+# ── 5. kamus Buku Usaha (murni) ──────────────────────────────────────────
+def K(id_, nama, peran="pemasok"):
+    return {"id": id_, "nama": nama, "peran": peran}
+
+
+class CocokKontakTests(unittest.TestCase):
+    def test_nama_lengkap_tanpa_awalan_badan_usaha(self):
+        daftar = [K("a", "UD Sumber Unggas"), K("b", "Toko Sumber Rejeki")]
+        self.assertEqual(kamus.cocok_kontak("ayam potong 40kg 1,64jt ud sumber unggas", daftar)["id"], "a")
+        self.assertEqual(kamus.cocok_kontak("gula 10kg sumber rejeki", daftar)["id"], "b")
+
+    def test_kata_pertama_nama(self):
+        daftar = [K("a", "PT Arunika Data", "pelanggan"), K("b", "Bu Sari", "pelanggan")]
+        self.assertEqual(kamus.cocok_kontak("nasi box arunika 30 pax", daftar)["id"], "a")
+        self.assertEqual(kamus.cocok_kontak("pesanan bu sari 20 porsi", daftar)["id"], "b")
+
+    def test_kata_pertama_yang_sama_tidak_ditebak(self):
+        daftar = [K("a", "UD Sumber Unggas"), K("b", "Toko Sumber Rejeki")]
+        self.assertIsNone(kamus.cocok_kontak("belanja di sumber", daftar))
+
+    def test_nama_lengkap_menang_atas_kata_pertama(self):
+        daftar = [K("a", "Sumber"), K("b", "Sumber Unggas")]
+        self.assertEqual(kamus.cocok_kontak("ayam sumber unggas", daftar)["id"], "b")
+
+    def test_potongan_kata_dan_nama_pendek_tidak_cocok(self):
+        daftar = [K("a", "PT Arunika Data"), K("b", "Bu Ani"), K("c", "CV")]
+        for teks in ("arunikadata 30 pax", "mani pedi", "cv 200rb", "", "125rb 50 pcs"):
+            self.assertIsNone(kamus.cocok_kontak(teks, daftar), teks)
+
+    def test_nama_pendek_cocok_bila_ditulis_lengkap(self):
+        self.assertEqual(kamus.cocok_kontak("pesanan bu ani 5 box", [K("b", "Bu Ani")])["id"], "b")
+
+
+# ── 6. saran Catat cepat lewat HTTP ──────────────────────────────────────
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class DeteksiCatatanTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        from app.api.routes.transactions import limiter
+        limiter.reset()
+        await self.pasang_aktif()
+        self.unggas = await self.kontak("UD Sumber Unggas", "pemasok")
+        self.arunika = await self.kontak("PT Arunika Data", "pelanggan")
+
+    async def saran(self, teks, *, user=None, hid="usaha", status=200, **isi):
+        self.current = user or self.pemilik
+        hdr = {} if hid is None else self.hdr(self.usaha if hid == "usaha" else hid)
+        r = await self.client.post("/transactions/suggest-envelope", headers=hdr, json={"description": teks, **isi})
+        self.current = self.pemilik
+        self.assertEqual(r.status_code, status, r.text)
+        return r.json()
+
+    async def test_pengeluaran_dengan_pemasok(self):
+        s = await self.saran("ayam potong 40kg ud sumber unggas", amount=1640000)
+        self.assertIsNone(s["jenis_catatan"])
+        self.assertEqual(s["kontak"], {"id": self.unggas["id"], "nama": "UD Sumber Unggas", "peran": "pemasok"})
+        self.assertEqual((s["envelope_name"], s["sumber"]), ("Bahan", {"jenis": "kamus_plugin"}))
+
+    async def test_kamus_usaha_menebak_amplop_bawaan(self):
+        for teks, amplop in (("kardus 50 pcs", "Operasional"), ("elpiji 3 tabung", "Operasional"),
+                             ("beras 25 kg", "Bahan")):
+            s = await self.saran(teks)
+            self.assertEqual((s["envelope_name"], s["sumber"]), (amplop, {"jenis": "kamus_plugin"}), teks)
+
+    async def test_penjualan_dengan_pelanggan(self):
+        s = await self.saran("jual nasi box arunika 30 pax")
+        self.assertEqual(s["jenis_catatan"], "penjualan")
+        self.assertEqual(s["kontak"], {"id": self.arunika["id"], "nama": "PT Arunika Data", "peran": "pelanggan"})
+
+    async def test_jenis_pilihan_user_menentukan_peran_kontak(self):
+        tanpa = await self.saran("arunika 30 pax")
+        self.assertEqual((tanpa["jenis_catatan"], tanpa["kontak"]), (None, None))      # pengeluaran: cari pemasok
+        s = await self.saran("arunika 30 pax", jenis="penjualan")
+        self.assertEqual((s["jenis_catatan"], s["kontak"]["nama"]), (None, "PT Arunika Data"))
+        # User memilih pengeluaran: kata "jual" tetap dilaporkan, tetapi kontak yang dicari pemasok.
+        s = await self.saran("jual arunika", jenis="pengeluaran")
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), ("penjualan", None))
+        await self.saran("x", jenis="prive", status=422)
+
+    async def test_modal_dan_pinjaman_tanpa_kontak(self):
+        s = await self.saran("setor modal 5jt arunika")
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), ("modal", None))
+        s = await self.saran("terima pinjaman bank 10jt")
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), ("pinjaman", None))
+
+    async def test_teks_kosong_tetap_punya_kunci(self):
+        s = await self.saran("", amount=5000)
+        self.assertEqual((s["jenis_catatan"], s["kontak"], s["envelope_id"]), (None, None, None))
+
+    async def test_karyawan_hanya_jenis_tidak_pernah_kontak(self):
+        s = await self.saran("jual nasi box arunika 30 pax", user=self.karyawan)
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), ("penjualan", None))
+        s = await self.saran("ayam ud sumber unggas", user=self.karyawan)
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), (None, None))
+        s = await self.saran("arunika", user=self.karyawan, jenis="penjualan")
+        self.assertIsNone(s["kontak"])
+        # Modal dan pinjaman bukan catatan karyawan.
+        s = await self.saran("setor modal 5jt", user=self.karyawan)
+        self.assertIsNone(s["jenis_catatan"])
+
+    async def test_fungsi_kontak_tidak_dipanggil_untuk_karyawan(self):
+        """Lapis pertama (host): fungsi plugin tidak dijalankan sama sekali untuk karyawan; `ctx.data()` yang menolak
+        karyawan (`khusus_admin`) hanya lapis kedua."""
+        from unittest.mock import patch
+        asli, dipanggil = titik.panggil, []
+
+        async def catat(ctx, fn, *args):
+            dipanggil.append(ctx.peran)
+            return await asli(ctx, fn, *args)
+
+        with patch.object(titik, "panggil", catat):
+            await self.saran("ayam ud sumber unggas", user=self.karyawan)
+            await self.saran("jual arunika", user=self.karyawan, jenis="penjualan")
+            self.assertEqual(dipanggil, [])
+            await self.saran("ayam ud sumber unggas", user=self.admin)
+            self.assertEqual(dipanggil, ["admin"])
+
+    async def test_karyawan_tanpa_izin_penjualan_tidak_mendapat_jenis(self):
+        async with self.Session() as db:
+            db.add(RuangBatasan(household_id=self.usaha, user_id=self.karyawan.id, jenis_catatan=["pengeluaran"]))
+            await db.commit()
+        s = await self.saran("jual nasi box 30 pax", user=self.karyawan)
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), (None, None))
+
+    async def test_admin_mendapat_kontak(self):
+        s = await self.saran("ayam ud sumber unggas", user=self.admin)
+        self.assertEqual(s["kontak"]["id"], self.unggas["id"])
+
+    async def test_ruang_lain_dan_ruang_keluarga_tidak_memakai_kamus_ini(self):
+        for hid in (self.usaha2, None):                       # plugin tidak terpasang · ruang keluarga
+            s = await self.saran("jual ayam ud sumber unggas", hid=hid)
+            self.assertEqual((s["jenis_catatan"], s["kontak"]), (None, None), hid)
+
+    async def test_kontak_ruang_lain_tidak_pernah_cocok(self):
+        await self.pasang_aktif(self.usaha2)
+        async with self.Session() as db:
+            db.add(BukuUsahaKontak(household_id=self.usaha2, nama="CV Tirta Kemasan", peran="pemasok"))
+            await db.commit()
+        s = await self.saran("kardus tirta kemasan")
+        self.assertIsNone(s["kontak"])
+        s = await self.saran("kardus tirta kemasan", hid=self.usaha2)
+        self.assertEqual(s["kontak"]["nama"], "CV Tirta Kemasan")
+        self.assertIsNone((await self.saran("ayam ud sumber unggas", hid=self.usaha2))["kontak"])
+
+    async def test_kontak_terhapus_tidak_cocok(self):
+        await self.p("DELETE", f"/kontak/{self.unggas['id']}", status=204)
+        self.assertIsNone((await self.saran("ayam ud sumber unggas"))["kontak"])
+
+    async def test_plugin_dijeda_tidak_mendeteksi(self):
+        await self.aksi("jeda")
+        s = await self.saran("jual ayam ud sumber unggas")
+        self.assertEqual((s["jenis_catatan"], s["kontak"]), (None, None))
+        self.assertNotEqual(s["sumber"], {"jenis": "kamus_plugin"})
+
+    async def test_fungsi_plugin_gagal_tidak_merusak_saran(self):
+        from unittest.mock import patch
+        with patch.object(kamus, "cocok_kontak", side_effect=RuntimeError("bug plugin")):
+            s = await self.saran("ayam ud sumber unggas")
+        self.assertEqual((s["kontak"], s["envelope_name"]), (None, "Bahan"))
+
+    async def test_saran_banyak_tidak_berubah_bentuk(self):
+        r = await self.client.post("/transactions/suggest-envelopes", headers=self.hdr(),
+                                   json={"descriptions": ["jual ayam ud sumber unggas"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(set(r.json()["results"][0]), {"index", "envelope_id", "envelope_name", "confident", "sumber"})
 
 
 if __name__ == "__main__":
