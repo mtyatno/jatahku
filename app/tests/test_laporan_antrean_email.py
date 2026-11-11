@@ -189,8 +189,8 @@ class StatusAwalTests(unittest.TestCase):
             ("belum_verifikasi", "dimatikan", "tanpa_email", "smtp"),
         )
         self.assertEqual(
-            (a.MAKS_PERCOBAAN, a.JEDA_COBA_ULANG, a.BATAS_MENGIRIM, a.MAKS_EMAIL_PER_JALAN),
-            (3, timedelta(minutes=55), timedelta(minutes=30), 50),
+            (a.MAKS_PERCOBAAN, a.JEDA_COBA_ULANG, a.BATAS_MENGIRIM, a.KELOMPOK),
+            (3, timedelta(minutes=55), timedelta(minutes=30), 100),
         )
         self.assertEqual(a.hasil_kosong(), KOSONG)
 
@@ -599,7 +599,7 @@ class AntreanTests(unittest.IsolatedAsyncioTestCase):
         # Review T3 (C): laporan yang selalu galat sesudah klaim (di sini `data` berbentuk baru yang tidak bisa dirakit
         # `surel.isi_email_laporan`) dan memenuhi batas per jalan (dibatasi 2 di sini) menahan laporan yang lebih baru
         # paling lama tiga jalan, lalu `gagal`; sesudah itu antrean jalan lagi. Dulu tertahan selamanya.
-        self.enterContext(patch.object(antrean_email, "MAKS_EMAIL_PER_JALAN", 2))
+        self.enterContext(patch.object(antrean_email, "KELOMPOK", 2))
         rusak = [await self.laporan(await self.user(n), terbit=T0 - (9 - i) * MENIT, data={"versi": 99})
                  for i, n in enumerate(("Ani", "Budi"))]
         baru = await self.laporan(await self.user("Citra"), terbit=T0 - MENIT)
@@ -692,13 +692,13 @@ class AntreanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.antrean(rids[0]), ("terkirim", None, 1, T0, T0 + 10 * MENIT))
         self.assertEqual(await self.antrean(rids[1]), ("terkirim", None, 1, T0 + 10 * MENIT, T0 + 20 * MENIT))
 
-    async def test_paling_banyak_50_per_jalan_terlama_dulu(self):
-        n = antrean_email.MAKS_EMAIL_PER_JALAN + 1
+    async def test_paling_banyak_kelompok_per_putaran_terlama_dulu(self):
+        n = antrean_email.KELOMPOK + 5
         urutan = list(range(n))
         random.Random(7).shuffle(urutan)   # dibuat acak: urutan kirim mengikuti `terbit_at`, bukan urutan simpan
         async with self.Session() as db:
             for i in urutan:
-                u = User(name=f"U{i:02d}", email=f"u{i:02d}@contoh.id")
+                u = User(name=f"U{i:03d}", email=f"u{i:03d}@contoh.id")
                 u.email_verified_at = T0 - 30 * HARI
                 db.add(u)
                 await db.flush()
@@ -706,11 +706,66 @@ class AntreanTests(unittest.IsolatedAsyncioTestCase):
                               payday_day=1, data=DATA, terbit_at=T0 - (n - i) * MENIT, email_status="menunggu"))
             await db.commit()
 
-        self.assertEqual(await self.jalan(), {**KOSONG, "terkirim": n - 1})
-        self.assertEqual(self.pengirim.tujuan(), [f"u{i:02d}@contoh.id" for i in range(n - 1)])
+        hasil, penuh = await antrean_email.putaran_antrean(lambda: T0)
+        self.assertEqual(hasil, {**KOSONG, "terkirim": antrean_email.KELOMPOK})
+        self.assertIs(penuh, True)
+        self.assertEqual(self.pengirim.tujuan(), [f"u{i:03d}@contoh.id" for i in range(antrean_email.KELOMPOK)])
 
-        self.assertEqual(await self.jalan(), {**KOSONG, "terkirim": 1})
-        self.assertEqual(self.pengirim.tujuan()[-1], f"u{n - 1:02d}@contoh.id")
+        hasil, penuh = await antrean_email.putaran_antrean(lambda: T0)
+        self.assertEqual(hasil, {**KOSONG, "terkirim": 5})
+        self.assertIs(penuh, False)
+        self.assertEqual(self.pengirim.tujuan()[-1], f"u{n - 1:03d}@contoh.id")
+
+    async def test_putaran_tanpa_jam_memakai_jam_sungguhan(self):
+        # Ruling P1: `jam=None` = jam modul; `proses_antrean_email` mengembalikan hanya hasilnya.
+        rid = await self.laporan(await self.user("Ani"))
+        hasil, penuh = await antrean_email.putaran_antrean()
+        self.assertEqual((hasil, penuh), ({**KOSONG, "terkirim": 1}, False))
+        self.assertGreater(utc((await self.baca(rid)).email_terkirim_at), T0)
+
+    async def test_sebelum_laporan_dipanggil_per_laporan(self):
+        for i, n in enumerate(("Ani", "Budi", "Citra")):
+            await self.laporan(await self.user(n), terbit=T0 - (9 - i) * MENIT)
+        peristiwa = []
+
+        async def pencatat():
+            peristiwa.append(("sebelum", len(self.pengirim.kiriman)))
+
+        hasil, penuh = await antrean_email.putaran_antrean(lambda: T0, sebelum_laporan=pencatat)
+        self.assertEqual(hasil, {**KOSONG, "terkirim": 3})
+        self.assertIs(penuh, False)
+        # dipanggil 3 kali, masing-masing sebelum kiriman ke-n (n kiriman sudah keluar saat panggilan ke-n)
+        self.assertEqual(peristiwa, [("sebelum", 0), ("sebelum", 1), ("sebelum", 2)])
+
+    async def test_berhenti_tidak_mengklaim_lagi(self):
+        rids = [await self.laporan(await self.user(n), terbit=T0 - (9 - i) * MENIT)
+                for i, n in enumerate(("Ani", "Budi", "Citra"))]
+
+        hasil, penuh = await antrean_email.putaran_antrean(lambda: T0, berhenti=lambda: len(self.pengirim.kiriman) >= 1)
+
+        self.assertEqual(hasil, {**KOSONG, "terkirim": 1})
+        self.assertIs(penuh, False)
+        self.assertEqual(await self.antrean(rids[0]), ("terkirim", None, 1, T0, T0))
+        for rid in rids[1:]:
+            self.assertEqual(await self.antrean(rid), ("menunggu", None, 0, None, None))
+
+    async def test_berhenti_saat_sebelum_laporan_tidak_mengklaim(self):
+        # Ruling P2: permintaan berhenti yang datang selagi `sebelum_laporan` menunggu (mis. jeda pacu) dicek lagi
+        # tepat sebelum klaim, jadi laporan itu tidak diklaim dan tidak dihitung percobaan.
+        rids = [await self.laporan(await self.user(n), terbit=T0 - (9 - i) * MENIT)
+                for i, n in enumerate(("Ani", "Budi"))]
+        diminta = []
+
+        async def pacu():
+            if len(self.pengirim.kiriman) == 1:
+                diminta.append(True)   # berhenti diminta selagi menunggu sebelum laporan ke-2
+
+        hasil, penuh = await antrean_email.putaran_antrean(
+            lambda: T0, sebelum_laporan=pacu, berhenti=lambda: bool(diminta))
+
+        self.assertEqual(hasil, {**KOSONG, "terkirim": 1})
+        self.assertIs(penuh, False)
+        self.assertEqual(await self.antrean(rids[1]), ("menunggu", None, 0, None, None))
 
     # ------------------------------------------------------------------ dihidupkan lagi
 
