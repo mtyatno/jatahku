@@ -1,6 +1,6 @@
 # Worker email laporan — desain
 
-**Status:** desain disetujui pemilik di percakapan (11 Nov 2026); menunggu review spec tertulis. Belum diimplementasikan.
+**Status:** diimplementasikan di branch `feat/worker-email-laporan` (Task 1–7, 12 Nov 2026; keputusan saat eksekusi di "Penyesuaian saat eksekusi (12 Nov 2026)" di bawah); **belum digabung dan belum tayang**, menunggu review akhir dan merge.
 **Terkait:** `docs/superpowers/specs/2026-11-01-laporan-berkala-design.md` (laporan berkala; tahap 2 email sudah tayang
 lewat #198, #203, #206), `docs/laporan-berkala.md` (dokumen operasional).
 
@@ -175,3 +175,44 @@ yang sedang berlaku. Gagal memuat → teks galat di kartu, halaman Admin lain te
 - **Aplikasi tidak tahu email yang ditolak sesudah diterima exim** (bounce); hanya penyedia transaksional yang
   melaporkannya. Tidak ditangani di sini.
 - **RAM VPS 4 GB:** worker ±150 MB; dipantau lewat `systemctl status`.
+
+## Penyesuaian saat eksekusi (12 Nov 2026)
+
+Task 1–7 dikerjakan subagent-driven di branch `feat/worker-email-laporan`; rulings P1–P8 pengendali dan review per tugas
+menghasilkan keputusan berikut. Bagian 1–9 di atas tetap rancangan yang disetujui; bila berbeda, butir di sini yang
+berlaku. Perilaku final: `docs/laporan-berkala.md` (bagian "Email laporan", "Pemantauan dan alarm", "Pemulihan").
+
+- **`EMAIL_LAPORAN_PER_DETIK` adalah setelan teks** (`Settings.EMAIL_LAPORAN_PER_DETIK: str = "3"`, bukan `float`) yang
+  diurai worker (`worker_email.laju_dari_pengaturan`: kosong atau bukan angka → 3, di luar 0,1–20 → batas terdekat, dengan
+  peringatan tanpa isi nilainya). `Settings` dipakai bersama API, jadi nilai `.env` yang salah tidak boleh menggagalkan API
+  maupun worker menyala (ruling P4).
+- **`putaran_antrean` memeriksa permintaan berhenti sebelum dan sesudah jeda pacu**, tepat sebelum klaim, jadi sesudah
+  SIGTERM tidak ada klaim baru; parameter `jam` opsional (`None` = jam sungguhan modul; ruling P1, P2). `worker_email.jalankan`
+  punya parameter keyword-only tambahan sebagai celah tes (ruling P3).
+- **Awalan akun nonaktif adalah konstanta publik** `antrean_email.AWALAN_AKUN_NONAKTIF` (`("deleted_", "banned_")`), dipakai
+  `job.py` dan `pantau_email.py`; `pantau_email` tidak mengimpor `job` (ruling P5).
+- **`pantau_email.API_MENYALA`** (diisi `lifespan` di `app/main.py`) menentukan masa tenang 15 menit `worker_mati`;
+  `periksa_alarm(..., api_menyala=...)` dengan `None` = tanpa masa tenang, mis. jalan manual dari shell (ruling P6).
+- **Pemeriksaan kesehatan deploy** (mengganti "is-active dalam 20 detik" di bagian 5): `deploy.sh` membaca `NRestarts`, tidur
+  10 detik, lalu mensyaratkan worker aktif **dan** penghitung tidak berubah, karena unit `Type=simple` sudah "aktif" begitu
+  proses dibuat (worker yang langsung mati baru terlihat sesudahnya). Jalur unit tetap di skrip (tanpa variabel yang bisa
+  menimpa), dan unit juga dipasang ulang bila belum di-enable (perbaikan bila deploy sebelumnya gagal sesudah `cp`).
+- **Satu kali jalankan ulang deploy** saat worker pertama dipasang: deploy yang membawa blok worker masih menjalankan
+  `deploy.sh` lama, dan `deploy.sh` tidak menjalankan ulang dirinya (ruling P7, terbukti: skrip yang berubah oleh `git pull`-nya
+  sendiri melanjutkan isi lama). Langkahnya ada di checklist `AGENTS.md`; sebelum itu email laporan menunggu di antrean.
+- **Log boleh memuat id laporan dan id user seperti tahap 2; pesan alarm dan respons Admin tidak memuat alamat maupun id
+  user** (ruling P8, mempersempit batasan umum "tanpa id user" di bagian 6).
+- **Kartu Admin diberi ruang di bawahnya** pada layar kecil supaya tombol melayang tidak menutupinya.
+- **Teks alarm persis** (`pantau_email.pesan_alarm`; tanpa `parse_mode`, jam dalam WIB):
+  - `pindah_penyedia`: "📬 Penerima email laporan sudah N. Saatnya pindah ke penyedia email transaksional — langkahnya di
+    AGENTS.md bagian 'Pindah penyedia email'."
+  - `worker_mati`: "⚠️ Worker email laporan tidak memberi tanda hidup sejak HH:MM WIB. Cek: sudo systemctl status
+    jatahku-worker" (tanpa "sejak HH:MM WIB" bila tanda hidup tak pernah ada).
+  - `antrean_tersendat`: "⚠️ Antrean email laporan tersendat: N menunggu, tertua X jam. Cek: sudo journalctl -u
+    jatahku-worker -n 50"
+  - `email_gagal`: "⚠️ Ada email laporan yang gagal dikirim (N dalam 7 hari). Periksa SMTP, lalu ikuti "kirim ulang
+    email" di docs/laporan-berkala.md."
+- **Definisi `email_gagal`:** ada laporan `gagal` yang `email_terakhir_at`-nya lebih baru dari waktu alarm `email_gagal`
+  terakhir terkirim; bila belum pernah terkirim, dalam 24 jam terakhir. N di pesan = `gagal_7_hari`. Telegram admin tidak
+  diatur atau gagal → WARNING (`email laporan: alarm tidak dikirim, token atau ADMIN_TELEGRAM_ID kosong` atau `… tidak
+  terkirim ke Telegram (<jenis galat>)`; kodenya tidak ikut dicatat), waktu tidak ditulis, dicoba lagi jam berikutnya.

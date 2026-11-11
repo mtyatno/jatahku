@@ -1,7 +1,7 @@
 # Laporan berkala — desain
 
 **Tanggal:** 1 Nov 2026
-**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026. Tahap 2 (email) diimplementasi 5 Nov 2026 di branch `feat/laporan-berkala-email` (belum tayang; menunggu review akhir dan merge).
+**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026. Tahap 2 (email) diimplementasi 5 Nov 2026 di branch `feat/laporan-berkala-email` dan **tayang 10 Nov 2026** (PR #198, #203, #206). Cara email dikirim sekarang (worker tersendiri, laju tetap, pemantauan dan alarm): `docs/superpowers/specs/2026-11-11-worker-email-laporan-design.md`.
 **Tahap 1 tayang 5 Nov 2026:** PR #190 (squash `56ddf74`), revisi alembic `967a27d0c15d` dan checklist deploy di
 `AGENTS.md` ("Laporan berkala tahap 1") dijalankan pemilik; job pertama (5 Nov 04.30 WIB) menerbitkan 21 laporan, semuanya
 diberi tahu, dan unduh PDF berkata sandi dicoba pemilik. Perilaku final tahap 1: `docs/laporan-berkala.md`. Yang berubah dari desain ini tercatat di "Penyesuaian saat

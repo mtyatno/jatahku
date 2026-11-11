@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** dieksekusi 12 Nov 2026 (subagent-driven, Task 1–7 di branch `feat/worker-email-laporan`); menunggu review akhir dan merge.
+
 **Goal:** Antrean email laporan dijalankan service terpisah `jatahku-worker` dengan laju tetap, `laporan_job` hanya menerbitkan (dengan batas waktu), dan pemilik mendapat kartu Admin serta alarm Telegram.
 
 **Architecture:** Antrean tetap di tabel `reports`; `antrean_email.py` mendapat satu fungsi putaran yang bisa dipacu dan dihentikan, dipakai worker (`worker_email.py`, proses sendiri, tanda hidup di Redis). `pantau_email.py` menghitung keadaan antrean untuk endpoint Admin dan alarm yang diperiksa `laporan_job` di proses API. `deploy.sh` memasang dan me-restart unit systemd dari repo.
