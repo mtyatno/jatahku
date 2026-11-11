@@ -767,7 +767,8 @@ export default function Admin() {
 
           <ReceiptScanCard />
 
-          <EmailLaporanCard />
+          {/* Ruang di bawah kartu terakhir agar lolos dari tombol melayang (hanya tampil di bawah lg, seperti Layout). */}
+          <div className="pb-20 lg:pb-0"><EmailLaporanCard /></div>
         </>
       )}
 
