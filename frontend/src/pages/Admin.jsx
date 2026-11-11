@@ -5,6 +5,7 @@ import { docTypeLine, issuerRows } from '../lib/scanStats';
 import { pendingBadge, hasRulesSection } from '../lib/proofRules';
 import ProofRulesSection from '../components/ProofRulesSection';
 import ProofSamplesSection from '../components/ProofSamplesSection';
+import EmailLaporanCard from '../components/admin/EmailLaporanCard';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
 
 function formatDate(isoStr) {
@@ -765,6 +766,8 @@ export default function Admin() {
           </div>
 
           <ReceiptScanCard />
+
+          <EmailLaporanCard />
         </>
       )}
 

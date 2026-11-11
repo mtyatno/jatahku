@@ -1,11 +1,15 @@
 from uuid import UUID
 from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal
+import logging
+
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, and_
 from pydantic import BaseModel
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
 from app.models.models import (
@@ -15,6 +19,7 @@ from app.models.models import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def fmt(n):
@@ -981,3 +986,31 @@ async def receipt_scan_stats(
     except Exception:  # Redis mati → tetap tampilkan statistik OCR
         stats["llm_budget"] = None
     return stats
+
+
+@router.get("/email-laporan")
+async def admin_email_laporan(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Keadaan antrean email laporan + alarm yang sedang berlaku (kartu "Email laporan" di Admin).
+    Hanya angka dan kode; tanpa alamat email dan tanpa id user. Redis mati → tetap 200 dengan worker tak hidup."""
+    from app.services.laporan import pantau_email
+
+    sekarang = datetime.now(timezone.utc)
+    r = None
+    try:
+        r = aioredis.from_url(get_settings().REDIS_URL, socket_timeout=5, socket_connect_timeout=5)
+    except Exception:
+        logger.warning("email laporan: klien Redis tidak bisa dibuka untuk kartu Admin")
+        r = None
+    try:
+        keadaan = await pantau_email.keadaan_email(db, r, sekarang)
+    finally:
+        if r is not None:
+            try:
+                await r.aclose()
+            except Exception:
+                pass
+    keadaan["alarm"] = await pantau_email.alarm_berlaku(db, keadaan, sekarang)
+    return keadaan
