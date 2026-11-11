@@ -65,15 +65,20 @@ if [ "$RUNNING" != "$EXPECTED" ]; then
 fi
 echo "✅ API menjalankan ${EXPECTED:0:7}"
 
-# Worker email laporan (unit di deploy/jatahku-worker.service). Unit dipasang hanya
-# bila berbeda dari yang terpasang, worker selalu di-restart supaya memakai kode baru.
-# Worker yang tidak aktif tidak menghentikan deploy: langkah lain tetap jalan, lalu
-# deploy diakhiri gagal (WORKER_GAGAL, pola yang sama dengan MIG_PENDING).
-WORKER_UNIT_SRC="${WORKER_UNIT_SRC:-/opt/jatahku/app/deploy/jatahku-worker.service}"
-WORKER_UNIT_DEST="${WORKER_UNIT_DEST:-/etc/systemd/system/jatahku-worker.service}"
+# Worker email laporan (unit di deploy/jatahku-worker.service). Unit dipasang bila
+# berbeda dari yang terpasang atau belum di-enable (perbaikan bila jalan sebelumnya
+# gagal sesudah cp); worker selalu di-restart supaya memakai kode baru.
+# Unit bertipe simple: `restart` kembali begitu proses dibuat, jadi worker yang
+# langsung mati (impor gagal, .env salah, DB/Redis menolak) baru terlihat sesudahnya.
+# Karena itu: baca penghitung restart otomatis (NRestarts), tunggu 10 detik (lebih
+# dari RestartSec=5 + waktu menyala), lalu worker dianggap hidup hanya bila aktif DAN
+# penghitung tidak berubah. Gagal tidak menghentikan deploy: langkah lain tetap jalan,
+# lalu deploy diakhiri gagal (WORKER_GAGAL, pola yang sama dengan MIG_PENDING).
+# [worker-email-laporan:blok]
 WORKER_GAGAL=""
-if ! cmp -s "$WORKER_UNIT_SRC" "$WORKER_UNIT_DEST"; then
-    if sudo cp "$WORKER_UNIT_SRC" "$WORKER_UNIT_DEST" \
+if ! cmp -s /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
+    || ! sudo systemctl is-enabled --quiet jatahku-worker; then
+    if sudo cp /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
         && sudo systemctl daemon-reload \
         && sudo systemctl enable jatahku-worker; then
         echo "✅ Unit jatahku-worker dipasang"
@@ -82,22 +87,24 @@ if ! cmp -s "$WORKER_UNIT_SRC" "$WORKER_UNIT_DEST"; then
         echo "⚠️  Unit jatahku-worker gagal dipasang"
     fi
 fi
-sudo systemctl restart jatahku-worker || true
-WORKER_AKTIF=""
-for i in $(seq 1 20); do
-    if sudo systemctl is-active --quiet jatahku-worker; then
-        WORKER_AKTIF=1
-        break
+if sudo systemctl restart jatahku-worker; then
+    WORKER_RESTART_AWAL=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
+    sleep 10
+    WORKER_RESTART_AKHIR=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
+    if [ -n "$WORKER_RESTART_AWAL" ] && [ "$WORKER_RESTART_AWAL" = "$WORKER_RESTART_AKHIR" ] \
+        && sudo systemctl is-active --quiet jatahku-worker; then
+        echo "✅ Worker email laporan aktif"
+    else
+        WORKER_GAGAL=1
+        echo "❌ Worker email laporan tidak stabil — tidak aktif, restart otomatis bertambah, atau penghitung tak terbaca (${WORKER_RESTART_AWAL:-?} -> ${WORKER_RESTART_AKHIR:-?})"
+        sudo journalctl -u jatahku-worker -n 40 --no-pager || true
     fi
-    sleep 1
-done
-if [ -n "$WORKER_AKTIF" ]; then
-    echo "✅ Worker email laporan aktif"
 else
     WORKER_GAGAL=1
-    echo "❌ Worker email laporan tidak aktif setelah 20 detik"
+    echo "❌ Worker email laporan gagal di-restart"
     sudo journalctl -u jatahku-worker -n 40 --no-pager || true
 fi
+# [/worker-email-laporan:blok]
 
 # Frontend
 if [ -d "frontend" ]; then
@@ -168,9 +175,11 @@ else
     echo "⚠️ Deploy warning — API status: $STATUS"
 fi
 
+# [worker-email-laporan:pesan]
 if [ -n "$WORKER_GAGAL" ]; then
     echo "❌ Worker email laporan belum berjalan. Lihat: sudo journalctl -u jatahku-worker -n 40 --no-pager"
 fi
+# [/worker-email-laporan:pesan]
 
 if [ -n "$MIG_PENDING" ]; then
     echo "❌ Kode baru sudah terpasang, tapi migrasi database belum jalan (database: ${MIG_DB:-kosong}, head: $MIG_HEAD)."
@@ -178,6 +187,8 @@ if [ -n "$MIG_PENDING" ]; then
     exit 2
 fi
 
+# [worker-email-laporan:akhir]
 if [ -n "$WORKER_GAGAL" ]; then
     exit 1
 fi
+# [/worker-email-laporan:akhir]

@@ -1,5 +1,10 @@
 """Unit systemd worker email laporan dan langkahnya di deploy.sh (uji teks/urutan)."""
+import os
+import re
+import shutil
+import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -33,6 +38,18 @@ class UnitWorkerTest(unittest.TestCase):
         self.assertIn("deploy.sh", "\n".join(l for l in self.lines if l.startswith("#")))
 
 
+SRC_ASLI = "/opt/jatahku/app/deploy/jatahku-worker.service"
+DEST_ASLI = "/etc/systemd/system/jatahku-worker.service"
+
+
+def _bagian(src, nama):
+    m = re.search(
+        r"# \[worker-email-laporan:%s\]\n(.*?)# \[/worker-email-laporan:%s\]\n" % (nama, nama),
+        src, re.S)
+    assert m, nama
+    return m.group(1)
+
+
 class DeployWorkerTest(unittest.TestCase):
     def setUp(self):
         self.src = DEPLOY.read_text()
@@ -43,32 +60,143 @@ class DeployWorkerTest(unittest.TestCase):
 
     def test_posisi_blok(self):
         api = self.src.index('echo "✅ API menjalankan')
-        unit = self.src.index("jatahku-worker.service")
-        restart = self.src.index("systemctl restart jatahku-worker")
+        awal = self.src.index("# [worker-email-laporan:blok]")
+        akhir = self.src.index("# [/worker-email-laporan:blok]")
         fe = self.src.index("# Frontend")
-        self.assertLess(api, unit)
-        self.assertLess(unit, restart)
-        self.assertLess(restart, fe)
+        self.assertLess(api, awal)
+        self.assertLess(awal, akhir)
+        self.assertLess(akhir, fe)
 
-    def test_perintah_pasang(self):
-        for s in ["cmp -s", "systemctl daemon-reload", "systemctl enable jatahku-worker",
-                  "systemctl is-active --quiet jatahku-worker",
-                  "sudo journalctl -u jatahku-worker -n 40 --no-pager"]:
-            self.assertIn(s, self.src)
-        self.assertIn("/etc/systemd/system/jatahku-worker.service", self.src)
+    def test_jalur_tetap_dan_tanpa_override(self):
+        blok = _bagian(self.src, "blok")
+        self.assertIn(SRC_ASLI, blok)
+        self.assertIn(DEST_ASLI, blok)
+        self.assertNotIn("WORKER_UNIT_", self.src)
 
     def test_tidak_menjalankan_ulang_diri(self):
         self.assertNotIn("exec ", self.src)
         self.assertNotIn('"$0"', self.src)
 
-    def test_worker_gagal_keluar_nonnol_di_akhir(self):
-        self.assertIn("WORKER_GAGAL=1", self.src)
-        cek = self.src.rindex('if [ -n "$WORKER_GAGAL" ]')
-        self.assertGreater(cek, self.src.index("Health check"))
-        sisa = self.src[cek:]
-        self.assertIn("exit 1", sisa)
-        # MIG_PENDING tetap ada dan mendahului pemeriksaan akhir worker
-        self.assertLess(self.src.rindex('if [ -n "$MIG_PENDING" ]'), cek)
+    def test_pesan_sebelum_mig_pending_dan_cek_akhir_sesudahnya(self):
+        mig = self.src.rindex('if [ -n "$MIG_PENDING" ]')
+        self.assertLess(self.src.index("# [worker-email-laporan:pesan]"), mig)
+        self.assertGreater(self.src.index("# [worker-email-laporan:akhir]"), mig)
+
+
+STUB_SYSTEMCTL = r"""#!/bin/bash
+echo "systemctl $*" >> "$LOG"
+case "$1" in
+  restart) [ "$RESTART_FAIL" = 1 ] && exit 1; exit 0 ;;
+  is-enabled) [ "$ENABLED" = 1 ]; exit $? ;;
+  is-active) [ "$ACTIVE" = 1 ]; exit $? ;;
+  show)
+    n=$(cat "$STATE/show_n" 2>/dev/null || echo 0)
+    echo $((n+1)) > "$STATE/show_n"
+    if [ "$n" = 0 ]; then echo -n "$NR1"; else echo -n "$NR2"; fi
+    [ -n "$NR1$NR2" ] && echo
+    exit 0 ;;
+esac
+exit 0
+"""
+
+
+@unittest.skipUnless(shutil.which("bash"), "bash tidak tersedia")
+class DeployWorkerPerilakuTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.repo_unit = self.tmp / "repo.service"
+        self.dest = self.tmp / "dest.service"
+        self.repo_unit.write_text(UNIT.read_text())
+        self.log = self.tmp / "log"
+        self.log.write_text("")
+        self.state = self.tmp / "state"
+        self.state.mkdir()
+        self._stub("sudo", '#!/bin/bash\nexec "$@"\n')
+        self._stub("systemctl", STUB_SYSTEMCTL)
+        self._stub("journalctl", '#!/bin/bash\necho "journalctl $*" >> "$LOG"\necho JURNAL-STUB\n')
+        self._stub("sleep", '#!/bin/bash\necho "sleep $*" >> "$LOG"\n')
+        src = DEPLOY.read_text()
+        blok = _bagian(src, "blok").replace(SRC_ASLI, str(self.repo_unit)).replace(DEST_ASLI, str(self.dest))
+        assert str(self.dest) in blok
+        skrip = (
+            "set -e\nMIG_PENDING=\"${MIG_PENDING:-}\"\n" + blok
+            + 'echo "LANJUT-LANGKAH-LAIN"\n' + _bagian(src, "pesan")
+            + 'if [ -n "$MIG_PENDING" ]; then echo MIG-PESAN; exit 2; fi\n'
+            + _bagian(src, "akhir")
+        )
+        self.script = self.tmp / "skrip.sh"
+        self.script.write_text(skrip)
+
+    def _stub(self, nama, isi):
+        f = self.bin / nama
+        f.write_text(isi)
+        f.chmod(f.stat().st_mode | stat.S_IEXEC)
+
+    def jalan(self, *, enabled=1, active=1, nr1="0", nr2="0", restart_fail=0, pasang_unit=True, mig=""):
+        if pasang_unit:
+            self.dest.write_text(self.repo_unit.read_text())
+        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", LOG=str(self.log),
+                   STATE=str(self.state), ENABLED=str(enabled), ACTIVE=str(active),
+                   NR1=nr1, NR2=nr2, RESTART_FAIL=str(restart_fail), MIG_PENDING=mig)
+        r = subprocess.run(["bash", str(self.script)], capture_output=True, text=True, env=env, timeout=30)
+        calls = self.log.read_text().splitlines()
+        return r, calls
+
+    def assertGagal(self, r, calls):
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("LANJUT-LANGKAH-LAIN", r.stdout)
+        self.assertIn("JURNAL-STUB", r.stdout)
+        self.assertIn("journalctl -u jatahku-worker -n 40 --no-pager", calls)
+        self.assertIn("journalctl -u jatahku-worker", r.stdout)
+        self.assertNotIn("✅ Worker email laporan aktif", r.stdout)
+
+    def test_a_pasang_pertama(self):
+        r, calls = self.jalan(enabled=0, pasang_unit=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.dest.read_text(), self.repo_unit.read_text())
+        for c in ["systemctl daemon-reload", "systemctl enable jatahku-worker",
+                  "systemctl restart jatahku-worker"]:
+            self.assertIn(c, calls)
+        self.assertIn("✅ Worker email laporan aktif", r.stdout)
+        self.assertIn("LANJUT-LANGKAH-LAIN", r.stdout)
+
+    def test_b_unit_sama_dan_enabled(self):
+        r, calls = self.jalan()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("systemctl daemon-reload", calls)
+        self.assertNotIn("systemctl enable jatahku-worker", calls)
+        self.assertIn("systemctl restart jatahku-worker", calls)
+        self.assertIn("sleep 10", calls)
+
+    def test_c_sama_tapi_belum_enabled(self):
+        r, calls = self.jalan(enabled=0)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("systemctl daemon-reload", calls)
+        self.assertIn("systemctl enable jatahku-worker", calls)
+
+    def test_d_tidak_aktif(self):
+        self.assertGagal(*self.jalan(active=0))
+
+    def test_e_penghitung_restart_naik(self):
+        self.assertGagal(*self.jalan(nr1="0", nr2="2"))
+
+    def test_f_penghitung_tak_terbaca(self):
+        self.assertGagal(*self.jalan(nr1="", nr2=""))
+        self.setUp()
+        self.assertGagal(*self.jalan(nr1="0", nr2=""))
+
+    def test_g_restart_gagal(self):
+        r, calls = self.jalan(restart_fail=1)
+        self.assertGagal(r, calls)
+
+    def test_gagal_bersama_mig_pending_keduanya_tercetak(self):
+        r, calls = self.jalan(active=0, mig="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Worker email laporan belum berjalan", r.stdout)
+        self.assertIn("MIG-PESAN", r.stdout)
 
 
 if __name__ == "__main__":
