@@ -105,6 +105,20 @@ export function aksiCatatPlugin(kontribusi) {
   return grup;
 }
 
+/**
+ * Aksi plugin aktif yang formnya sanggup mencatat `jenis` catatan yang terdeteksi di Catat cepat (Plugin U5). Modul web
+ * plugin menyatakannya lewat `catatCepat: { aksi, jenis: [...] }`; hanya dipakai bila aksi itu ada di kontribusi ruang
+ * ini (plugin aktif untuk user ini) dan formnya ada di bundle. `aksiDatar` = `aksiCatatPlugin(...).flatMap(g => g.aksi)`.
+ */
+export function aksiUntukJenis(aksiDatar, webPlugin, jenis) {
+  for (const a of arr(aksiDatar)) {
+    const modul = webPlugin?.(a.plugin);
+    const cc = modul?.catatCepat;
+    if (cc && cc.aksi === a.aksi && arr(cc.jenis).includes(jenis) && modul.aksi?.[a.aksi]) return a;
+  }
+  return null;
+}
+
 /** Halaman utama plugin (rute terpendek): tujuan aksi cepat yang belum punya form sendiri. */
 export function halamanUtama(kontribusi, pluginId) {
   const rute = arr(kontribusi?.pages).filter(p => p.plugin === pluginId).map(p => p.route)

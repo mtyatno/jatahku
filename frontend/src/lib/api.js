@@ -128,11 +128,12 @@ class ApiClient {
 
   // Catat cepat (R7, 04-kontrak-api.md §3): saran amplop + sumber + aturan batasan untuk nominal itu. Ruang dari header
   // (ruang aktif), atau ruang keluarga user sendiri bila `ruangKeluarga` (tawaran pengeluaran pribadi).
-  async saranCatat({ description, amount }, { ruangKeluarga = false } = {}) {
+  async saranCatat({ description, amount, jenis }, { ruangKeluarga = false } = {}) {
     try {
       const res = await this.request('/transactions/suggest-envelope', {
         method: 'POST', ruangKeluarga,
-        body: JSON.stringify({ description, ...(amount ? { amount } : {}) }),
+        // `jenis` (U5): jenis yang sedang dipilih, menentukan kontak yang dicari (pemasok atau pelanggan).
+        body: JSON.stringify({ description, ...(amount ? { amount } : {}), ...(jenis ? { jenis } : {}) }),
       });
       if (res.ok) return res.json();
     } catch {}

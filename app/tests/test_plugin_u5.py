@@ -348,7 +348,8 @@ class DeteksiCatatanTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
     async def test_pengeluaran_dengan_pemasok(self):
         s = await self.saran("ayam potong 40kg ud sumber unggas", amount=1640000)
         self.assertIsNone(s["jenis_catatan"])
-        self.assertEqual(s["kontak"], {"id": self.unggas["id"], "nama": "UD Sumber Unggas", "peran": "pemasok"})
+        self.assertEqual(s["kontak"], {"id": self.unggas["id"], "nama": "UD Sumber Unggas", "peran": "pemasok",
+                                       "plugin": "buku_usaha"})
         self.assertEqual((s["envelope_name"], s["sumber"]), ("Bahan", {"jenis": "kamus_plugin"}))
 
     async def test_kamus_usaha_menebak_amplop_bawaan(self):
@@ -360,7 +361,8 @@ class DeteksiCatatanTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
     async def test_penjualan_dengan_pelanggan(self):
         s = await self.saran("jual nasi box arunika 30 pax")
         self.assertEqual(s["jenis_catatan"], "penjualan")
-        self.assertEqual(s["kontak"], {"id": self.arunika["id"], "nama": "PT Arunika Data", "peran": "pelanggan"})
+        self.assertEqual(s["kontak"], {"id": self.arunika["id"], "nama": "PT Arunika Data", "peran": "pelanggan",
+                                       "plugin": "buku_usaha"})
 
     async def test_jenis_pilihan_user_menentukan_peran_kontak(self):
         tanpa = await self.saran("arunika 30 pax")

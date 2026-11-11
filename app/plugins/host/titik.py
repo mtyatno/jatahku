@@ -765,7 +765,9 @@ async def deteksi_catatan(db, user, household_id, teks: str, *, jenis: str | Non
         ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber="kontak_catatan")
         mulai = time.perf_counter()
         try:
-            hasil["kontak"] = rapikan_kontak(await panggil(ctx, a.d.fn, teks, peran_kontak), peran_kontak)
+            kontak = rapikan_kontak(await panggil(ctx, a.d.fn, teks, peran_kontak), peran_kontak)
+            # `plugin` = pemilik kontak: web memasangnya ke field `reference` plugin itu yang `key`-nya = peran.
+            hasil["kontak"] = {**kontak, "plugin": a.m.id} if kontak is not None else None
         except Exception:
             log.exception("kontak_catatan plugin %s gagal", a.m.id)
         finally:

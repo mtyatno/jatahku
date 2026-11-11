@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bodyIzinBaru, bodyTambahan, bolehTambahKartu, fieldUntuk, isianBolehUntuk, izinBaru, kontribusiDariKatalog,
-  KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, bodyPasang,
+  KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, aksiUntukJenis,
+  bodyPasang,
   bodyTambahKartu, butuhBelumAktif, formatEkspor, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin,
   namaBerkasUnduhan, namaPlugin, pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
 } from './pluginHost.js';
@@ -267,4 +268,27 @@ test('U4: katalog Beranda karyawan menjadi kontribusi kartu saja', () => {
   assert.deepEqual([k.nav, k.quick_actions, k.pages, k.form_fields], [[], [], [], []]);
   assert.deepEqual(kontribusiDariKatalog(null), KONTRIBUSI_KOSONG);
   assert.deepEqual(kontribusiDariKatalog([{ key: 'core.kpi.jatah', asal: 'inti' }]).cards, []);
+});
+
+// ── Plugin U5: form Fitur Tambahan untuk jenis catatan yang terdeteksi di Catat cepat ──
+test('aksiUntukJenis: aksi plugin aktif yang modul webnya menyatakan sanggup mencatat jenis itu', () => {
+  const aksi = [
+    { key: 'plugin:buku_usaha.penjualan', aksi: 'buku_usaha.penjualan', plugin: 'buku_usaha', label: 'Penjualan' },
+    { key: 'plugin:lain.x', aksi: 'lain.x', plugin: 'lain', label: 'X' },
+  ];
+  const modul = {
+    buku_usaha: { aksi: { 'buku_usaha.penjualan': () => null },
+      catatCepat: { aksi: 'buku_usaha.penjualan', jenis: ['penjualan', 'modal', 'pinjaman'] } },
+    lain: { aksi: { 'lain.x': () => null } },
+  };
+  const web = (id) => modul[id] || null;
+  assert.equal(aksiUntukJenis(aksi, web, 'penjualan').aksi, 'buku_usaha.penjualan');
+  assert.equal(aksiUntukJenis(aksi, web, 'modal').label, 'Penjualan');
+  assert.equal(aksiUntukJenis(aksi, web, 'pengeluaran'), null);
+  assert.equal(aksiUntukJenis([aksi[1]], web, 'penjualan'), null);        // plugin tidak aktif di ruang ini
+  assert.equal(aksiUntukJenis([], web, 'penjualan'), null);
+  assert.equal(aksiUntukJenis(aksi, () => null, 'penjualan'), null);
+  // Modul menyatakan aksi yang formnya tidak ada di bundle: tidak dipakai.
+  const tanpaForm = () => ({ aksi: {}, catatCepat: { aksi: 'buku_usaha.penjualan', jenis: ['penjualan'] } });
+  assert.equal(aksiUntukJenis(aksi, tanpaForm, 'penjualan'), null);
 });

@@ -10,17 +10,25 @@
 // masing-masing punya ref sendiri. Bila hasil satu jalur belum pasti (koneksi putus, sedang diproses, 5xx), isian dan
 // jalur lain dikunci, dan kirim ulang memakai permintaan yang sama persis, jadi tidak tercatat dua kali dan tidak
 // pernah berpindah ruang diam-diam.
+//
+// Plugin U5: saran juga membawa jenis catatan dan kontak dari Fitur Tambahan yang aktif di ruang ini. Kata seperti
+// "jual" memindahkan jenis ke Penjualan (selama user belum memilih sendiri); pemasok terdeteksi ikut tersimpan lewat
+// field form plugin (`tambahan`); penjualan atas nama pelanggan, modal, dan pinjaman dilanjutkan di form Fitur
+// Tambahan (`onFormPlugin`) dengan isian awal dari yang sudah diketik. Karyawan tidak menerima kontak dan tidak
+// punya form plugin.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import {
-  JEDA_SARAN_MS, amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, labelSumber,
-  perluCekPribadi, pesanAjari, pesanTerkunci, tawaranPribadi, uraiCatatan,
+  JEDA_SARAN_MS, amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, isiFormPlugin,
+  jenisLain, jenisTerdeteksi, kontakCatatan, labelSumber, perluCekPribadi, pesanAjari, pesanTerkunci, tambahanKontak,
+  tawaranPribadi, uraiCatatan,
 } from '../lib/catatCepat';
 import { hasilCatat, payloadCatat } from '../lib/ruangPeran';
 import { EnvelopeIcon, Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 
 const LABEL = { pengeluaran: 'Pengeluaran', penjualan: 'Penjualan' };
+const LABEL_KONTAK = { pemasok: 'Pemasok', pelanggan: 'Pelanggan' };
 const rp = (n) => `Rp${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
 
 function buatRef() {
@@ -38,9 +46,14 @@ function Baris({ label, children }) {
 
 export default function CatatCepat({
   ruang, jenisBoleh = ['pengeluaran'], jenisAwal = 'pengeluaran', onDone, onCancel, onFormLengkap,
+  isianPlugin = [], formPlugin, onFormPlugin,
 }) {
   const namaRuang = ruang?.nama || 'ruang ini';
-  const [jenis, setJenis] = useState(jenisBoleh.includes(jenisAwal) ? jenisAwal : jenisBoleh[0]);
+  const jenisMula = jenisBoleh.includes(jenisAwal) ? jenisAwal : jenisBoleh[0];
+  const [jenis, setJenis] = useState(jenisMula);
+  const [jenisManual, setJenisManual] = useState(false);   // user memilih sendiri: deteksi tidak memindahkannya lagi
+  const manual = useRef(false);                            // cermin `jenisManual` untuk jawaban saran yang datang belakangan
+  const [tanpaKontak, setTanpaKontak] = useState(false);   // user melepas kontak terdeteksi untuk catatan ini
   const [teks, setTeks] = useState('');
   const [daftar, setDaftar] = useState(null);
   const [pilihan, setPilihan] = useState(null);         // amplop dipilih user (null = pakai tebakan)
@@ -69,10 +82,13 @@ export default function CatatCepat({
     const id = ++urut.current;
     if (!keterangan && !nominal) { setSaran(null); setKeluarga(null); return undefined; }
     const t = setTimeout(async () => {
-      const desc = jenis === 'pengeluaran' ? keterangan : '';
-      const s = await api.saranCatat({ description: desc, amount: nominal || undefined });
+      // U5: keterangan dikirim untuk semua jenis (jenis catatan dan kontak terdeteksi dari sana); tebakan amplop
+      // tetap hanya dipakai untuk pengeluaran.
+      const s = await api.saranCatat({ description: keterangan, amount: nominal || undefined, jenis });
       if (id !== urut.current) return;
       setSaran(s);
+      const terdeteksi = jenisTerdeteksi(s, jenisBoleh);
+      if (terdeteksi && !manual.current && terdeteksi !== jenis) { setJenis(terdeteksi); setPilihan(null); }
       let k = null;
       if (perluCekPribadi({ jenis, keterangan, saran: s })) {
         k = await api.saranCatat({ description: keterangan }, { ruangKeluarga: true });
@@ -83,8 +99,13 @@ export default function CatatCepat({
     return () => clearTimeout(t);
   }, [keterangan, nominal, jenis]);
 
-  useEffect(() => { setAbaikanPribadi(false); }, [keterangan]);
-  useEffect(() => { if (!teks.trim()) setPilihan(null); }, [teks]);   // kotak dikosongkan = mulai lagi dari tebakan
+  useEffect(() => { setAbaikanPribadi(false); setTanpaKontak(false); }, [keterangan]);
+  // Kotak dikosongkan = mulai lagi dari tebakan. Jenis yang dipindahkan deteksi ikut kembali; pilihan user sendiri tetap.
+  useEffect(() => {
+    if (teks.trim()) return;
+    setPilihan(null);
+    if (!manual.current && !terkunci) setJenis(jenisMula);
+  }, [teks]);
 
   const amplopId = amplopDipakai(pilihan, jenis === 'pengeluaran' ? saran : null);
   const pilihanAmplop = amplopPilihan(daftar, jenis, jenis === 'pengeluaran' ? saran?.envelope_id : null);
@@ -96,6 +117,12 @@ export default function CatatCepat({
   const pribadi = terkunci === 'pribadi'
     || (!terkunci && !abaikanPribadi && jenis === 'pengeluaran' && tawaranPribadi(keluarga));
   const dariTebakan = amplopId && !pilihan && saran?.envelope_id === amplopId;
+  // U5: kontak terdeteksi untuk jenis ini; form Fitur Tambahan untuk penjualan atas nama pelanggan, modal, pinjaman.
+  const kontak = tanpaKontak ? null : kontakCatatan(jenis, saran);
+  const lain = jenisLain(saran);
+  const labelFormLain = lain && formPlugin ? formPlugin(lain.id) : null;
+  const labelFormPelanggan = jenis === 'penjualan' && kontak && formPlugin ? formPlugin('penjualan') : null;
+  const bukaFormPlugin = (j) => onFormPlugin?.(j, isiFormPlugin({ jenis: j, nominal, keterangan, kontak }));
 
   // Kirim satu jalur. Selama hasil jalur ini belum pasti, kirim ulang memakai permintaan yang sama persis.
   const kirim = async (jalur, buat) => {
@@ -125,7 +152,11 @@ export default function CatatCepat({
       const salah = galatCatat({ nominal, amplopId: amplop ? amplopId : null, tahan: aturan.tahan });
       if (salah) { setGalat(salah); return; }
     }
-    kirim('usaha', () => payloadCatat({ jenis, nominal, keterangan, amplopId, clientRef: refUsaha }));
+    kirim('usaha', () => {
+      const p = payloadCatat({ jenis, nominal, keterangan, amplopId, clientRef: refUsaha });
+      const tambahan = jenis === 'pengeluaran' ? tambahanKontak(isianPlugin, kontak, amplop) : null;
+      return tambahan ? { ...p, body: { ...p.body, tambahan } } : p;
+    });
   };
 
   const catatPribadi = () => {
@@ -145,7 +176,7 @@ export default function CatatCepat({
         <div role="radiogroup" aria-label="Jenis catatan" className="grid grid-cols-2 gap-2">
           {jenisBoleh.map(j => (
             <button key={j} type="button" role="radio" aria-checked={jenis === j}
-              onClick={() => { setJenis(j); setPilihan(null); }} disabled={!!terkunci}
+              onClick={() => { manual.current = true; setJenisManual(true); setJenis(j); setPilihan(null); }} disabled={!!terkunci}
               className="rounded-xl py-2.5 text-sm font-semibold border transition-colors"
               style={jenis === j
                 ? { background: 'var(--brand-50, rgba(29,158,117,0.12))', borderColor: 'var(--brand-400)', color: 'var(--brand-600)' }
@@ -173,7 +204,12 @@ export default function CatatCepat({
         <div className="rounded-xl px-4 py-2" style={{ background: 'var(--page)', border: '1px solid var(--border)' }}
           aria-live="polite">
           <p className="text-xs font-semibold uppercase tracking-wide pt-1" style={{ color: 'var(--text-muted)' }}>Terdeteksi</p>
-          <Baris label="Jenis">{LABEL[jenis]}</Baris>
+          <Baris label="Jenis">
+            {LABEL[jenis]}
+            {!jenisManual && jenis !== jenisMula && (
+              <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>dari kata di catatanmu</span>
+            )}
+          </Baris>
           <Baris label="Nominal">{nominal > 0 ? <b className="font-mono">{rp(nominal)}</b> : <span style={{ color: '#DC2626' }}>belum ada</span>}</Baris>
           <Baris label="Keterangan">{keterangan || '—'}</Baris>
           <Baris label="Amplop">
@@ -186,6 +222,34 @@ export default function CatatCepat({
               </span>
             ) : <span style={{ color: 'var(--text-muted)' }}>pilih di bawah</span>}
           </Baris>
+          {kontak && (
+            <Baris label={LABEL_KONTAK[kontak.peran]}>
+              <span className="inline-flex flex-col items-end">
+                <span className="font-semibold">{kontak.nama}</span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  dari Kontak ·{' '}
+                  <button type="button" className="underline" disabled={!!terkunci} onClick={() => setTanpaKontak(true)}>
+                    bukan {LABEL_KONTAK[kontak.peran].toLowerCase()} ini
+                  </button>
+                </span>
+              </span>
+            </Baris>
+          )}
+        </div>
+      )}
+
+      {!terkunci && (labelFormLain || labelFormPelanggan) && (
+        <div role="status" className="rounded-xl px-4 py-3 text-sm border"
+          style={{ borderColor: 'var(--border)', background: 'var(--page)', color: 'var(--text)' }}>
+          {labelFormLain ? (
+            <p>Sepertinya ini <b>{lain.label}</b>, bukan penjualan atau pengeluaran. Catat lewat form {labelFormLain} supaya tidak dihitung sebagai omzet.</p>
+          ) : (
+            <p>Supaya tercatat atas nama <b>{kontak.nama}</b> dan dibagi menurut alokasi omzet, lanjutkan di form {labelFormPelanggan}.</p>
+          )}
+          <button type="button" onClick={() => bukaFormPlugin(labelFormLain ? lain.id : 'penjualan')}
+            className="btn-outline text-sm mt-2">
+            Lanjut di form {labelFormLain || labelFormPelanggan}
+          </button>
         </div>
       )}
 

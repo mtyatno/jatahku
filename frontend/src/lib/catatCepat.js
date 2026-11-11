@@ -8,6 +8,11 @@
 // ruang, klien bertanya ke ruang keluarga user sendiri (permintaan TANPA header ruang = ruang keluarga). Tawaran
 // muncul hanya bila jawabannya kata yang diajarkan user itu sendiri. Server tidak pernah menggabungkan dua ruang dalam
 // satu kueri (AGENTS.md aturan 8), dan tawaran ini tidak tersimpan di mana pun.
+//
+// Plugin U5: jawaban saran juga membawa `jenis_catatan` dan `kontak` dari Fitur Tambahan yang aktif di ruang itu
+// (04-kontrak-api.md §3). Jenis terdeteksi hanya memindahkan pilihan ke penjualan; modal dan pinjaman serta penjualan
+// atas nama pelanggan dicatat lewat form Fitur Tambahan itu (isian awal dari yang sudah diketik). Pemasok ikut
+// tersimpan lewat field form plugin (`tambahan`). Karyawan tidak pernah menerima kontak (server).
 import { parseAmount } from './parseAmount.js';
 
 export const SUMBER_DIKENAL = new Set(['kata_saya', 'kamus_ruang']);
@@ -119,4 +124,47 @@ export function pesanTerkunci(jalur, namaRuang = 'ruang ini') {
   if (jalur === 'usaha') return `Isian dikunci sampai hasilnya pasti. Tekan "Simpan ke ${namaRuang}" lagi; tidak akan tercatat dua kali.`;
   if (jalur === 'pribadi') return 'Isian dikunci sampai hasilnya pasti. Tekan "Catat di ruang keluarga" lagi; tidak akan tercatat dua kali.';
   return '';
+}
+
+// ── Plugin U5: jenis catatan dan kontak terdeteksi ───────────────────────
+const PERAN_KONTAK = { pengeluaran: 'pemasok', penjualan: 'pelanggan' };
+const JENIS_LAIN = { modal: 'Modal pemilik', pinjaman: 'Pinjaman' };
+
+/** Jenis Catat cepat yang dipilih otomatis dari kata di catatan: hanya penjualan, dan hanya bila boleh untuk user. */
+export function jenisTerdeteksi(saran, jenisBoleh) {
+  return saran?.jenis_catatan === 'penjualan' && Array.isArray(jenisBoleh) && jenisBoleh.includes('penjualan')
+    ? 'penjualan' : null;
+}
+
+/** Jenis terdeteksi yang bukan jenis Catat cepat (modal, pinjaman): dicatat lewat form Fitur Tambahan. */
+export function jenisLain(saran) {
+  const id = saran?.jenis_catatan;
+  return Object.prototype.hasOwnProperty.call(JENIS_LAIN, id) ? { id, label: JENIS_LAIN[id] } : null;
+}
+
+/** Kontak terdeteksi yang cocok dengan jenis yang sedang dipilih (jawaban lama untuk jenis lain diabaikan). */
+export function kontakCatatan(jenis, saran) {
+  const k = saran?.kontak;
+  if (!k || typeof k.id !== 'string' || !k.id || typeof k.nama !== 'string' || !k.nama.trim()) return null;
+  return k.peran === PERAN_KONTAK[jenis] ? k : null;
+}
+
+/**
+ * `tambahan` untuk `POST /transactions/` supaya pemasok terdeteksi ikut tersimpan: field `reference` milik plugin
+ * pemilik kontak yang `key`-nya sama dengan peran kontak. Tidak untuk amplop pribadi (server menolak, review #201 T3).
+ */
+export function tambahanKontak(fields, kontak, amplop) {
+  if (!kontak || !Array.isArray(fields)) return null;
+  if (amplop && (amplop.owner_id != null || amplop.is_personal)) return null;
+  const f = fields.find(x => x && x.plugin === kontak.plugin && x.target === 'transaction'
+    && x.type === 'reference' && x.key === kontak.peran);
+  return f ? { [f.plugin]: { [f.key]: kontak.id } } : null;
+}
+
+/** Isian awal form Fitur Tambahan dari yang sudah diketik di Catat cepat. Pelanggan hanya untuk penjualan. */
+export function isiFormPlugin({ jenis, nominal, keterangan, kontak }) {
+  const n = Math.floor(Number(nominal) || 0);
+  const isi = { jenis, jumlah: n > 0 ? String(n) : '', keterangan: (keterangan || '').trim() };
+  if (jenis === 'penjualan' && kontak?.peran === 'pelanggan' && kontak.id) isi.kontak_id = kontak.id;
+  return isi;
 }

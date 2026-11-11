@@ -3,7 +3,8 @@
 //
 // Server yang membagi dan menyimpan (`POST /p/buku_usaha/penjualan`: pemasukan inti dan jenisnya dalam satu commit);
 // pratinjau dari `POST /p/buku_usaha/penjualan/pratinjau` memakai hitungan yang sama, jadi angka di layar = yang dicatat.
-// Dibuka dari menu Catat ▾ dan FAB (Layout, `aksi['buku_usaha.penjualan']`); props { onDone, onCancel }.
+// Dibuka dari menu Catat ▾ dan FAB (Layout, `aksi['buku_usaha.penjualan']`); props { onDone, onCancel, isiAwal }.
+// `isiAwal` (U5): jenis, jumlah, keterangan, dan pelanggan yang sudah terdeteksi di Catat cepat.
 //
 // Review #201: ruang dikunci saat form dibuka (T6; ganti ruang di tab lain tidak membelokkan kiriman), dan setiap
 // kiriman membawa `client_ref` yang sama selama isiannya tidak berubah (T5; kirim ulang sesudah koneksi putus tidak
@@ -15,8 +16,8 @@ import { newRef } from '../../lib/ref';
 import { getRuangAktif } from '../../lib/ruangAktif';
 import { Icon } from '../../components/Icon';
 import {
-  JENIS_PEMASUKAN, PLUGIN_ID, amplopBawaanNonPenjualan, digitSaja, pesanUsahaGalat, rapikanKontak, rupiah,
-  urutkanKontak, validasiPenjualan,
+  JENIS_PEMASUKAN, PLUGIN_ID, amplopBawaanNonPenjualan, digitSaja, isiAwalPenjualan, pesanUsahaGalat, rapikanKontak,
+  rupiah, urutkanKontak, validasiPenjualan,
 } from './bukuUsaha';
 
 function hariIniLokal() {
@@ -36,10 +37,10 @@ function TautanLanjut({ perlu, onCancel }) {
   return null;
 }
 
-export default function FormPenjualan({ onDone, onCancel }) {
+export default function FormPenjualan({ onDone, onCancel, isiAwal }) {
   const hariIni = useMemo(hariIniLokal, []);
-  const [form, setForm] = useState({ jenis: 'penjualan', jumlah: '', kontak_id: '', envelope_id: '', tanggal: hariIni,
-    keterangan: '' });
+  const [form, setForm] = useState(() => ({ jenis: 'penjualan', jumlah: '', kontak_id: '', envelope_id: '',
+    tanggal: hariIni, keterangan: '', ...isiAwalPenjualan(isiAwal) }));
   const [pelanggan, setPelanggan] = useState([]);
   const [amplop, setAmplop] = useState([]);
   const [pratinjau, setPratinjau] = useState(null);         // { pembagian } | { galat: {teks, perlu} } | null

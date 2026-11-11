@@ -34,7 +34,8 @@ import CatatCepat from './CatatCepat';
 import { useKontribusiPlugin } from '../plugins/useKontribusi';
 import { webPlugin } from '../plugins';
 import {
-  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, fieldUntuk, halamanUtama, kontribusiUntuk, menuPlugin,
+  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, aksiUntukJenis, fieldUntuk, halamanUtama, kontribusiUntuk,
+  menuPlugin,
 } from '../lib/pluginHost';
 
 function QuickAddEnvelope({ onClose }) {
@@ -346,10 +347,10 @@ const sidebarItems = [
 const MORE_ACTIONS = FAB_OPTIONS.filter(o => o.key !== 'expense');
 
 // Form aksi cepat Fitur Tambahan (Plugin H3): komponen lazy dari `src/plugins/<id>` (`aksi`).
-function FormAksiPlugin({ Form, onDone, onCancel }) {
+function FormAksiPlugin({ Form, onDone, onCancel, isiAwal }) {
   return (
     <Suspense fallback={<div className="text-center py-8 text-gray-400">Loading...</div>}>
-      <Form onDone={onDone} onCancel={onCancel} />
+      <Form onDone={onDone} onCancel={onCancel} isiAwal={isiAwal} />
     </Suspense>
   );
 }
@@ -705,6 +706,14 @@ export default function Layout() {
     setFabAction(key);
   };
   const closeAction = () => { setFabAction(null); setActionPayload(null); };
+  // Plugin U5: jenis catatan yang terdeteksi di Catat cepat dan punya form Fitur Tambahan (mis. Penjualan Buku Usaha)
+  // dilanjutkan di form itu dengan isian awal dari yang sudah diketik. Karyawan tidak punya aksi plugin.
+  const aksiJenisCatat = (jenis) => aksiUntukJenis(aksiPluginDatar, webPlugin, jenis);
+  const lanjutFormPlugin = (jenis, isi) => {
+    const a = aksiJenisCatat(jenis);
+    if (!a) return;
+    setActionPayload(isi); setActionSeq(n => n + 1); setFabAction(a.key);
+  };
   const opsiKaryawan = catatKaryawan(akses);
   const fabOptions = karyawan ? opsiKaryawan : [...FAB_OPTIONS, ...aksiPluginDatar];
   const moreActions = karyawan ? opsiKaryawan.slice(1) : MORE_ACTIONS;
@@ -1015,10 +1024,13 @@ export default function Layout() {
               <CatatCepat ruang={ruang.aktif} jenisAwal={lembarCepat}
                 jenisBoleh={karyawan ? akses.jenisCatatan : ['pengeluaran', 'penjualan']}
                 onDone={selesaiCepat} onCancel={closeAction}
+                isianPlugin={karyawan ? [] : fieldUntuk(kontribusi, 'transaction')}
+                formPlugin={karyawan ? undefined : (j) => aksiJenisCatat(j)?.label || null}
+                onFormPlugin={karyawan ? undefined : lanjutFormPlugin}
                 onFormLengkap={karyawan ? undefined : (j) => setFabAction(j === 'penjualan' ? 'income' : 'expense-lengkap')} />
             )}
             {FormPlugin && (
-              <FormAksiPlugin Form={FormPlugin} onCancel={closeAction}
+              <FormAksiPlugin Form={FormPlugin} onCancel={closeAction} isiAwal={actionPayload}
                 onDone={(pesan) => { closeAction(); window.dispatchEvent(new CustomEvent('jatahku:txn-added')); if (pesan) showNotice(pesan); }} />
             )}
           </div>
