@@ -189,6 +189,11 @@
         "method": "GET",
         "path": "/laporan"
       }
+    ],
+    "advisor_rules": [
+      "BU-01",
+      "BU-02",
+      "BU-03"
     ]
   },
   "entitlement": {

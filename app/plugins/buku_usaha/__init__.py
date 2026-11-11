@@ -20,6 +20,7 @@ Tujuh kartu untuk pemilik dan admin; `penjualan_saya` untuk karyawan dan hanya m
 import re
 
 from app.plugins.buku_usaha import alokasi as al
+from app.plugins.buku_usaha import aturan
 from app.plugins.buku_usaha import kartu as bentuk
 from app.plugins.buku_usaha import laporan as lap
 from app.plugins.buku_usaha import metrics
@@ -454,3 +455,30 @@ async def kartu_penjualan_saya(ctx, pengaturan, periode):
     """Kartu karyawan: hanya penjualan yang dicatat karyawan itu sendiri bulan ini; tidak ada angka ruang."""
     th, bl = metrics.bulan_kartu(periode, metrics.hari_ini(ctx))
     return bentuk.penjualan_saya(await metrics.penjualan_saya_bulan(ctx, th, bl), metrics.kunci(th, bl))
+
+
+# ── U5: saran AI Advisor (BU-*) ──────────────────────────────────────────
+# Hanya pemilik dan admin (host tidak memanggil aturan untuk karyawan). Angka dari `metrics.py`, syarat dan kalimat
+# dari `aturan.py` / `teks.py`. Tanpa izin baru: ketiganya memakai izin baca yang sudah disetujui sejak U3.
+@plugin.aturan_advisor("BU-01", izin=["envelopes:read", "transactions:read"])
+async def saran_kas(ctx):
+    """Kas usaha di bawah kebutuhan dua minggu."""
+    return aturan.bu01(await metrics.kas_usaha(ctx), await metrics.beban_jendela(ctx, metrics.hari_ini(ctx)))
+
+
+@plugin.aturan_advisor("BU-02", izin=BACA_ANGKA)
+async def saran_prive(ctx):
+    """Prive melebihi laba (bulan lalu sampai tanggal 14, sesudah itu bulan berjalan)."""
+    hari = metrics.hari_ini(ctx)
+    th, bl = metrics.bulan_prive(hari)
+    return aturan.bu02(await metrics.laba_rugi(ctx, th, bl, hari))
+
+
+@plugin.aturan_advisor("BU-03", izin=["envelopes:read", *BACA_ANGKA])
+async def saran_pajak(ctx):
+    """Sudah ada omzet, tetapi amplop Pajak belum terisi."""
+    pajak = metrics.amplop_pajak(await ctx.envelopes(saldo=True))
+    if pajak is None:
+        return []
+    hari = metrics.hari_ini(ctx)
+    return aturan.bu03(pajak, await metrics.laba_rugi(ctx, hari.year, hari.month, hari))

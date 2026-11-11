@@ -42,6 +42,24 @@ TEMPLAT = {
     "kartu_keluar": "Keluar",
     "kartu_kontak_terhapus": "Kontak terhapus",
     "kartu_saya_kaki": "{bulan} · penjualan yang kamu catat sendiri",
+    # U5: saran AI Advisor BU-*. Angka dari `metrics.py`, syarat dari `aturan.py`.
+    "bu01_chip": "Kas usaha",
+    "bu01_judul": "Kas usaha cukup ±{hari} hari",
+    "bu01_judul_habis": "Kas usaha habis",
+    "bu01_isi": ("Kas {kas}, sedangkan kebutuhan dua minggu sekitar {butuh} "
+                 "(rata-rata pengeluaran 28 hari terakhir)."),
+    "bu01_fakta_kas": "Kas usaha",
+    "bu01_fakta_butuh": "Kebutuhan 2 minggu",
+    "bu02_chip": "Prive",
+    "bu02_judul": "Prive {bulan} melebihi laba",
+    "bu02_isi": "Prive {prive} lebih besar dari laba {laba}; selisih {selisih} mengurangi modal usaha.",
+    "bu02_fakta_prive": "Prive",
+    "bu02_fakta_laba": "Laba",
+    "bu03_chip": "Pajak",
+    "bu03_judul": "Amplop Pajak masih kosong",
+    "bu03_isi": "Omzet {bulan} sudah {omzet}, tetapi amplop Pajak belum terisi. Sisihkan lewat alokasi omzet.",
+    "aksi_laba_rugi": "Lihat laba rugi",
+    "aksi_alokasi": "Atur alokasi omzet",
 }
 
 
