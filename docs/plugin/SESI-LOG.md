@@ -4,6 +4,44 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## U4 · Kartu Beranda dan arus kas · 2026-11-12 · pemilik produk + Claude
+
+**Selesai** (branch `plugin/u4-kartu-beranda`, di atas `main` sesudah #207; tanpa migrasi; Plugin API 1.5; manifest Buku Usaha 0.4.0; tanpa izin baru, jadi instalasi lama tidak perlu menyetujui apa pun)
+- Keputusan pembuka (pemilik, 12 Nov): A kartu `penjualan_saya` untuk karyawan **dibuat** sesuai kontrak v0; B kartu memakai bulan kalender; C Kas usaha = jumlah sisa amplop bersama; D arus kas 13 minggu aktual tanpa proyeksi; E kartu di akhir Beranda, Mode Atur setelah beta (**pemilik minta diingatkan soal ini sesudah beta**); F penanda sumber selalu tampil, tanpa kartu antrean persetujuan, empat kartu dicentang bawaan.
+- **Host/SDK:** kelompok `tanggal` di `ringkas_*` (minggu dirangkai plugin; sama di SQLite dan PostgreSQL); `ctx.envelopes(saldo=True)` → `AmplopView.sisa` dari rumus saldo inti (`keadaan.saldo_amplop`); manifest `cards[].untuk` (`umum` | `karyawan`); `ctx.ringkas_pemasukan_saya` (saringan `user_id` di kueri host, `keadaan.perlu(milik_sendiri=True)`; job `bukan_user`). Katalog, tata letak, dan batch menyaring kartu plugin per peran lewat `registry.boleh`; kartu plugin karyawan disisipkan ke tata letak karyawan tanpa disimpan (`layout.dengan_kartu_plugin_karyawan`, ID `px-…`); tawaran pasang dan `contributions` hanya kartu umum; katalog kartu membawa `sumber`.
+- **Buku Usaha:** delapan `@plugin.kartu`; angka kartu di `metrics.py` (`bulan_kartu`, `minggu`, `arus_kas`, `kas`, `alokasi_omzet`, `pelanggan_teratas`, `penjualan_saya`), bentuk di `kartu.py`, kalimat di `teks.py`.
+- **Web:** Beranda karyawan mendaftarkan kartu plugin dari `GET /dashboard/cards` (`pluginHost.kontribusiDariKatalog`, `useKontribusi` → `kartuKaryawan`); panel Fitur Tambahan punya "Tambahkan kartu ke Beranda" untuk plugin yang sudah aktif (`bolehTambahKartu`), karena sebelumnya kartu hanya ditawarkan sekali saat pasang.
+- Tes: unittest penuh 3775 lulus (+39 di `test_plugin_u4.py`; tiga tes lama disesuaikan karena Buku Usaha kini punya kartu: `test_plugin_sdk` versi lama, `test_plugin_u1` manifest dan gerbang H); node --test 795 lulus; build ok; validator OK; `openapi_cek` tanpa perubahan memutus; Migrasi tidak berlaku. Anggaran 150 ms per penyedia diuji dengan data 12 bulan (3.000 transaksi, 1.800 pemasukan, SQLite). Uji mutasi 10 pemeriksaan (kartu karyawan tanpa `untuk`, baca milik sendiri tanpa saringan user / tanpa user / tanpa izin, tawaran dan kontribusi memuat kartu karyawan, kas ikut amplop pribadi, Beranda karyawan ikut kartu umum, katalog tanpa saringan peran, arus kas tanpa `hanya_bersama`): semuanya ditangkap tes.
+- Diperiksa di browser (Playwright + Chromium, PostgreSQL 16 + Redis + API + Vite, data contoh 95 hari): pemilik 1440 px gelap dan terang (panel Fitur Tambahan → tawaran → 7 kartu di akhir Beranda), karyawan 390 px gelap dan terang (kartu "Penjualan saya bulan ini" sesudah "Hari ini"; kartu omzet → `khusus_admin`); tanpa gulir samping; konsol hanya galat service worker dev.
+
+**Keputusan kecil**
+- Kelompok host bernama `tanggal`, bukan `minggu`: pengelompokan minggu berbeda antar-database, dan `tanggal` bisa dipakai kartu lain.
+- Chip naik/turun di Omzet dan Laba hanya untuk bulan yang sudah selesai; bulan berjalan dibanding bulan lalu yang utuh selalu tampak anjlok (angka bulan lalu tetap di kaki kartu).
+- Alokasi omzet: amplop belanja = terpakai dibanding jatah (merah bila lewat, seperti "Operasional lewat Rp305.000" di A3); amplop cadangan (`saving`) = jatahnya saja, karena uangnya keluar lewat prive, bukan pengeluaran. Jatah dihitung dari omzet berjenis penjualan (yang memang dibagi aturan).
+- "Penjualan saya" = bulan ini (kartu inti "Hari ini" sudah memuat hari ini).
+- Kartu plugin karyawan selalu tampil selama plugin aktif (karyawan tidak punya Fitur Tambahan atau Mode Atur); `default` manifest tidak dipakai untuknya.
+- Kas usaha tidak mengikuti periode yang dipilih di Beranda (saldo saat ini).
+
+**Digantung**
+- **Review keamanan terpisah disarankan sebelum merge** (sesi tidak bertanda review, tetapi keputusan A membuka baca keuangan pertama untuk karyawan lewat plugin dan mengubah aturan 4 "kartu plugin selalu umum").
+- Kartu "Penjualan saya" tetap tampil untuk karyawan yang `jenis_catatan`-nya tanpa penjualan (isinya Rp0).
+- Karyawan hanya mendapat kartu bila ia sendiri ada di flag `plugin_buku_usaha_users` (flag dibaca per user pelihat). Untuk beta (V1): masukkan karyawan ke flag atau pakai `*`.
+- Kanvas desain tidak dibuka di sesi ini: grafik arus kas memakai garis dari renderer H3; bila kanvas menggambar batang atau proyeksi, itu pekerjaan renderer/kartu kustom.
+- Lebih dari 1.000 pelanggan berbeda dalam sebulan membuat kartu Pelanggan teratas `gagal_memuat` (batas kelompok agregat, tidak memotong).
+- Template Beranda khusus ruang usaha (KPI Buku Usaha di atas) dan Mode Atur: setelah beta (keputusan E).
+
+**Jebakan**
+- `python -m unittest … -k "not x"` menjalankan 0 tes dan keluar dengan kode 5 (Python 3.12+): skrip uji mutasi yang memakai kode keluar akan mengira semua mutasi tertangkap. Periksa baris `Ran N tests`.
+- Tes anggaran 150 ms menyiapkan ±5.000 baris (±20 dtk); jangan dijalankan bersamaan dengan stack lokal lain.
+- Modal ajakan Telegram menutupi klik di cek browser pemilik: isi `localStorage.jatahku_tg_prompt_last_shown`; tema lewat `jatahku_theme` (JSON `{color, mode}`).
+
+**Cara melanjutkan**
+- `/tutup-sesi-plugin` (push, PR `Plugin U4: Kartu Beranda dan arus kas`, Closes #155), lalu "review PR #N terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
+- Sesudah tayang: di ruang usaha buka Fitur Tambahan → Buku Usaha → "Tambahkan kartu ke Beranda"; cek dengan akun karyawan bahwa hanya "Penjualan saya bulan ini" yang muncul.
+- Berikutnya `/sesi-plugin U5` atau `/sesi-plugin U6`.
+
+---
+
 ## U3 · review keamanan terpisah · 2026-11-11 · pemilik produk + Claude
 
 **Review** (branch `plugin/u3-review-keamanan`; lanjutan PR #204 yang sudah di-merge; PR #207; tanpa migrasi)
