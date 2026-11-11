@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
+import inspect
 import shutil
 import tempfile
 import unittest
@@ -313,8 +314,12 @@ class PantauTests(unittest.IsolatedAsyncioTestCase):
     def test_konstanta(self):
         self.assertEqual(
             (pantau_email.AMBANG_PENERIMA, pantau_email.BATAS_HIDUP, pantau_email.BATAS_TERSENDAT_MENIT,
-             pantau_email.MASA_TENANG, pantau_email.API_MENYALA, antrean_email.AWALAN_AKUN_NONAKTIF),
-            (300, timedelta(minutes=10), 360, timedelta(minutes=15), None, ("deleted_", "banned_")))
+             pantau_email.MASA_TENANG, antrean_email.AWALAN_AKUN_NONAKTIF),
+            (300, timedelta(minutes=10), 360, timedelta(minutes=15), ("deleted_", "banned_")))
+        # API_MENYALA berubah saat runtime (lifespan mengisinya): periksa ada dan bawaannya dari sumber, bukan nilai hidup.
+        self.assertTrue(hasattr(pantau_email, "API_MENYALA"))
+        sumber = inspect.getsource(pantau_email)
+        self.assertRegex(sumber, r"(?m)^API_MENYALA: datetime \| None = None$")
         self.assertEqual(pantau_email.ULANG, {"pindah_penyedia": 30 * HARI, "worker_mati": 24 * JAM,
                                               "antrean_tersendat": 24 * JAM, "email_gagal": 24 * JAM})
 

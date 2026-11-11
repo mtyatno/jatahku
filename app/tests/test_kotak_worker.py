@@ -27,6 +27,7 @@ from app.core.database import Base
 from app.main import app, lifespan
 from app.models.models import AppSetting, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, ReceiptScan, User
 from app.services.app_config import FEATURES, feature_enabled
+from app.services.laporan import pantau_email
 from app.services.kotak_struk import kerangka, merchants, record, view, waiter, worker
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import ExtractError, PdfLocked, TextDoc
@@ -1343,6 +1344,8 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
                 stack.enter_context(patch("app.main.stop_scheduler"))
                 stack.enter_context(patch("app.services.advisor.advisor_cache.install"))
                 stack.enter_context(patch.object(worker, "run_worker", fake_run))
+                # lifespan mengisi pantau_email.API_MENYALA (global modul): kembalikan sesudahnya, tes lain tidak boleh tercemar.
+                stack.enter_context(patch.object(pantau_email, "API_MENYALA", None))
                 async with lifespan(app):
                     yield
         finally:
@@ -1360,6 +1363,19 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             self.assertEqual(events, ["start"])
         self.assertEqual(events, ["start", "stop"])
+
+    async def test_lifespan_sets_api_menyala_for_the_alarm_quiet_period(self):
+        async def fake_run(stop):
+            await stop.wait()
+
+        sebelum = datetime.now(timezone.utc)
+        async with self.lifespan(fake_run):
+            menyala = pantau_email.API_MENYALA
+            self.assertIsNotNone(menyala)
+            self.assertEqual(menyala.utcoffset(), timedelta(0))   # berzona UTC
+            self.assertLessEqual(sebelum, menyala)
+            self.assertLess((datetime.now(timezone.utc) - menyala).total_seconds(), 5)
+        self.assertIsNone(pantau_email.API_MENYALA)   # dikembalikan ke nilai semula
 
     async def test_a_worker_that_died_does_not_break_shutdown(self):
         async def fake_run(stop):
