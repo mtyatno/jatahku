@@ -25,10 +25,15 @@ class UnitWorkerTest(unittest.TestCase):
             "User=jatahku",
             "WorkingDirectory=/opt/jatahku/app",
             "ExecStart=/opt/jatahku/venv/bin/python -m app.services.laporan.worker_email",
-            "Restart=always", "RestartSec=5", "Nice=5", "TimeoutStopSec=60",
+            "Restart=always", "RestartSec=5", "Nice=5", "TimeoutStopSec=60", "NoNewPrivileges=true",
             "WantedBy=multi-user.target",
         ]:
             self.assertIn(baris, self.lines)
+
+    def test_no_new_privileges_di_bagian_service(self):
+        service = self.lines.index("[Service]")
+        install = self.lines.index("[Install]")
+        self.assertTrue(service < self.lines.index("NoNewPrivileges=true") < install)
 
     def test_tanpa_environment_file(self):
         self.assertFalse(any(l.startswith("EnvironmentFile") for l in self.lines))
@@ -83,16 +88,21 @@ class DeployWorkerTest(unittest.TestCase):
         self.assertGreater(self.src.index("# [worker-email-laporan:akhir]"), mig)
 
 
+# Urutan penting (F-9): sebelum stub `sleep` jalan (berkas penanda `$STATE/tidur`), `show` menjawab NR1 dan
+# `is-active` menjawab aktif (proses baru saja dibuat); sesudahnya NR2 dan ACTIVE. Membaca penghitung pertama sesudah
+# tidur, atau memeriksa is-active sebelum tidur, menggagalkan tes d/e.
 STUB_SYSTEMCTL = r"""#!/bin/bash
 echo "systemctl $*" >> "$LOG"
 case "$1" in
   restart) [ "$RESTART_FAIL" = 1 ] && exit 1; exit 0 ;;
+  disable) [ "$DISABLE_FAIL" = 1 ] && exit 1; exit 0 ;;
+  daemon-reload) [ "$RELOAD_FAIL" = 1 ] && exit 1; exit 0 ;;
   is-enabled) [ "$ENABLED" = 1 ]; exit $? ;;
-  is-active) [ "$ACTIVE" = 1 ]; exit $? ;;
+  is-active)
+    [ -f "$STATE/tidur" ] || exit 0
+    [ "$ACTIVE" = 1 ]; exit $? ;;
   show)
-    n=$(cat "$STATE/show_n" 2>/dev/null || echo 0)
-    echo $((n+1)) > "$STATE/show_n"
-    if [ "$n" = 0 ]; then echo -n "$NR1"; else echo -n "$NR2"; fi
+    if [ -f "$STATE/tidur" ]; then echo -n "$NR2"; else echo -n "$NR1"; fi
     [ -n "$NR1$NR2" ] && echo
     exit 0 ;;
 esac
@@ -117,7 +127,7 @@ class DeployWorkerPerilakuTest(unittest.TestCase):
         self._stub("sudo", '#!/bin/bash\nexec "$@"\n')
         self._stub("systemctl", STUB_SYSTEMCTL)
         self._stub("journalctl", '#!/bin/bash\necho "journalctl $*" >> "$LOG"\necho JURNAL-STUB\n')
-        self._stub("sleep", '#!/bin/bash\necho "sleep $*" >> "$LOG"\n')
+        self._stub("sleep", '#!/bin/bash\necho "sleep $*" >> "$LOG"\ntouch "$STATE/tidur"\n')
         src = DEPLOY.read_text()
         blok = _bagian(src, "blok").replace(SRC_ASLI, str(self.repo_unit)).replace(DEST_ASLI, str(self.dest))
         assert str(self.dest) in blok
@@ -135,12 +145,14 @@ class DeployWorkerPerilakuTest(unittest.TestCase):
         f.write_text(isi)
         f.chmod(f.stat().st_mode | stat.S_IEXEC)
 
-    def jalan(self, *, enabled=1, active=1, nr1="0", nr2="0", restart_fail=0, pasang_unit=True, mig=""):
+    def jalan(self, *, enabled=1, active=1, nr1="0", nr2="0", restart_fail=0, pasang_unit=True, mig="",
+              disable_fail=0, reload_fail=0):
         if pasang_unit:
             self.dest.write_text(self.repo_unit.read_text())
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", LOG=str(self.log),
                    STATE=str(self.state), ENABLED=str(enabled), ACTIVE=str(active),
-                   NR1=nr1, NR2=nr2, RESTART_FAIL=str(restart_fail), MIG_PENDING=mig)
+                   NR1=nr1, NR2=nr2, RESTART_FAIL=str(restart_fail), MIG_PENDING=mig,
+                   DISABLE_FAIL=str(disable_fail), RELOAD_FAIL=str(reload_fail))
         r = subprocess.run(["bash", str(self.script)], capture_output=True, text=True, env=env, timeout=30)
         calls = self.log.read_text().splitlines()
         return r, calls
@@ -191,6 +203,39 @@ class DeployWorkerPerilakuTest(unittest.TestCase):
     def test_g_restart_gagal(self):
         r, calls = self.jalan(restart_fail=1)
         self.assertGagal(r, calls)
+
+    def test_urutan_baca_penghitung_tidur_aktif(self):
+        r, calls = self.jalan()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        urutan = [c for c in calls if c.startswith(("systemctl restart", "systemctl show", "sleep", "systemctl is-active"))]
+        self.assertEqual(urutan, [
+            "systemctl restart jatahku-worker", "systemctl show -p NRestarts --value jatahku-worker", "sleep 10",
+            "systemctl show -p NRestarts --value jatahku-worker", "systemctl is-active --quiet jatahku-worker"])
+
+    def test_h_sumber_unit_tidak_ada_worker_dihentikan(self):
+        # F-2: deploy revert (pohon tanpa unit dan modul worker): worker dihentikan dan unitnya dilepas, deploy lanjut.
+        self.dest.write_text(self.repo_unit.read_text())   # unit versi lama masih terpasang
+        self.repo_unit.unlink()
+        r, calls = self.jalan(pasang_unit=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("⚠️  Unit worker tidak ada di repo — worker email laporan dihentikan", r.stdout)
+        self.assertIn("systemctl disable --now jatahku-worker", calls)
+        self.assertFalse(self.dest.exists())
+        self.assertIn("systemctl daemon-reload", calls)
+        self.assertLess(calls.index("systemctl disable --now jatahku-worker"), calls.index("systemctl daemon-reload"))
+        self.assertFalse(any(c.startswith(("systemctl restart", "systemctl enable", "systemctl show", "sleep"))
+                             for c in calls), calls)
+        self.assertIn("LANJUT-LANGKAH-LAIN", r.stdout)
+        self.assertNotIn("Worker email laporan belum berjalan", r.stdout)
+
+    def test_i_sumber_unit_tidak_ada_dan_tidak_terpasang(self):
+        self.repo_unit.unlink()
+        r, calls = self.jalan(pasang_unit=False, disable_fail=1, reload_fail=1)   # unit tak dikenal: disable gagal
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(self.dest.exists())
+        self.assertIn("systemctl disable --now jatahku-worker", calls)
+        self.assertNotIn("systemctl restart jatahku-worker", calls)
+        self.assertIn("LANJUT-LANGKAH-LAIN", r.stdout)
 
     def test_gagal_bersama_mig_pending_keduanya_tercetak(self):
         r, calls = self.jalan(active=0, mig="1")

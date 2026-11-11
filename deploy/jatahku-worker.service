@@ -15,6 +15,7 @@ Restart=always
 RestartSec=5
 Nice=5
 TimeoutStopSec=60
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

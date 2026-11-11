@@ -69,40 +69,51 @@ echo "✅ API menjalankan ${EXPECTED:0:7}"
 # berbeda dari yang terpasang atau belum di-enable (perbaikan bila jalan sebelumnya
 # gagal sesudah cp); worker selalu di-restart supaya memakai kode baru.
 # Unit bertipe simple: `restart` kembali begitu proses dibuat, jadi worker yang
-# langsung mati (impor gagal, .env salah, DB/Redis menolak) baru terlihat sesudahnya.
+# langsung mati baru terlihat sesudahnya. Restart oleh systemd berarti proses mati saat
+# menyala (impor atau konfigurasi salah); database atau Redis yang tidak terjangkau
+# tidak mematikannya (dicatat di jurnal, worker mencoba lagi).
 # Karena itu: baca penghitung restart otomatis (NRestarts), tunggu 10 detik (lebih
 # dari RestartSec=5 + waktu menyala), lalu worker dianggap hidup hanya bila aktif DAN
 # penghitung tidak berubah. Gagal tidak menghentikan deploy: langkah lain tetap jalan,
 # lalu deploy diakhiri gagal (WORKER_GAGAL, pola yang sama dengan MIG_PENDING).
+# Pohon tanpa unit (deploy revert ke sebelum worker ada): worker dihentikan, unitnya
+# dilepas, dan deploy lanjut tanpa WORKER_GAGAL (antrean kembali dijalankan job lama).
 # [worker-email-laporan:blok]
 WORKER_GAGAL=""
-if ! cmp -s /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
-    || ! sudo systemctl is-enabled --quiet jatahku-worker; then
-    if sudo cp /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
-        && sudo systemctl daemon-reload \
-        && sudo systemctl enable jatahku-worker; then
-        echo "✅ Unit jatahku-worker dipasang"
-    else
-        WORKER_GAGAL=1
-        echo "⚠️  Unit jatahku-worker gagal dipasang"
+if [ ! -f /opt/jatahku/app/deploy/jatahku-worker.service ]; then
+    echo "⚠️  Unit worker tidak ada di repo — worker email laporan dihentikan"
+    sudo systemctl disable --now jatahku-worker 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/jatahku-worker.service || true
+    sudo systemctl daemon-reload 2>/dev/null || true
+else
+    if ! cmp -s /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
+        || ! sudo systemctl is-enabled --quiet jatahku-worker; then
+        if sudo cp /opt/jatahku/app/deploy/jatahku-worker.service /etc/systemd/system/jatahku-worker.service \
+            && sudo systemctl daemon-reload \
+            && sudo systemctl enable jatahku-worker; then
+            echo "✅ Unit jatahku-worker dipasang"
+        else
+            WORKER_GAGAL=1
+            echo "⚠️  Unit jatahku-worker gagal dipasang"
+        fi
     fi
-fi
-if sudo systemctl restart jatahku-worker; then
-    WORKER_RESTART_AWAL=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
-    sleep 10
-    WORKER_RESTART_AKHIR=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
-    if [ -n "$WORKER_RESTART_AWAL" ] && [ "$WORKER_RESTART_AWAL" = "$WORKER_RESTART_AKHIR" ] \
-        && sudo systemctl is-active --quiet jatahku-worker; then
-        echo "✅ Worker email laporan aktif"
+    if sudo systemctl restart jatahku-worker; then
+        WORKER_RESTART_AWAL=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
+        sleep 10
+        WORKER_RESTART_AKHIR=$(sudo systemctl show -p NRestarts --value jatahku-worker 2>/dev/null || true)
+        if [ -n "$WORKER_RESTART_AWAL" ] && [ "$WORKER_RESTART_AWAL" = "$WORKER_RESTART_AKHIR" ] \
+            && sudo systemctl is-active --quiet jatahku-worker; then
+            echo "✅ Worker email laporan aktif"
+        else
+            WORKER_GAGAL=1
+            echo "❌ Worker email laporan tidak stabil — tidak aktif, restart otomatis bertambah, atau penghitung tak terbaca (${WORKER_RESTART_AWAL:-?} -> ${WORKER_RESTART_AKHIR:-?})"
+            sudo journalctl -u jatahku-worker -n 40 --no-pager || true
+        fi
     else
         WORKER_GAGAL=1
-        echo "❌ Worker email laporan tidak stabil — tidak aktif, restart otomatis bertambah, atau penghitung tak terbaca (${WORKER_RESTART_AWAL:-?} -> ${WORKER_RESTART_AKHIR:-?})"
+        echo "❌ Worker email laporan gagal di-restart"
         sudo journalctl -u jatahku-worker -n 40 --no-pager || true
     fi
-else
-    WORKER_GAGAL=1
-    echo "❌ Worker email laporan gagal di-restart"
-    sudo journalctl -u jatahku-worker -n 40 --no-pager || true
 fi
 # [/worker-email-laporan:blok]
 
