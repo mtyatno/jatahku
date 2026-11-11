@@ -74,7 +74,7 @@ class BerkasReviewTests(unittest.TestCase):
         """`Decimal`/`int` di sel dibatasi: NaN, Infinity, dan nilai yang teksnya ribuan huruf ditolak `periksa`
         (500 `plugin_gagal`), bukan menjadi sel raksasa atau galat mentah saat digambar."""
         for v in (D("NaN"), D("sNaN"), D("Infinity"), D("-Infinity"), D("1E+200000"), D("1E-200000"),
-                  D("0E-200000"), D("1E+18"), 10 ** 18, -(10 ** 18)):
+                  D("0E-200000"), D("1E+999999999"), D("-1E+999999999"), D("1E+18"), 10 ** 18, -(10 ** 18)):
             for lap in (_lap([(date(2026, 10, 1), "a", v)]), _lap([], ringkasan=(("Omzet", v),))):
                 with self.assertRaises((TypeError, ValueError), msg=repr(v)[:40]):
                     berkas.periksa(lap)
@@ -205,8 +205,9 @@ class U3ReviewDbTests(unittest.IsolatedAsyncioTestCase):
         def gambar(lap, *, ruang, dibuat):
             raise ArithmeticError("fpdf2 gagal")
 
-        with patch.object(berkas, "render_pdf", gambar):
+        with patch.object(berkas, "render_pdf", gambar), self.assertLogs("jatahku.plugins", level="ERROR") as log:
             r = await self.p("GET", f"/laporan?periode={self.periode}&format=pdf")
+        self.assertIn("laporan plugin buku_usaha (pdf) gagal digambar", log.output[0])
         self.assertEqual(r.status_code, 500, r.text)
         self.assertTrue(r.headers.get("content-type", "").startswith("application/json"), r.text)
         self.assertEqual(self.kode(r), "plugin_gagal", r.text)
