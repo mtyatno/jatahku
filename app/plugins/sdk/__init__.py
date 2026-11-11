@@ -23,6 +23,9 @@ manifest. `ctx.data("<entitas>")` (U1) membaca dan menulis tabel plugin sendiri 
 tulis hanya dari `rute` non-GET. Galat dari `rute`: `GalatRute(status, kode, detail)` atau `NilaiTidakSah` (422).
 U3: angka dari `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` (agregat di database, tidak terpotong); `rute` GET boleh
 mengembalikan `Laporan` yang digambar host menjadi PDF atau CSV.
+U4 (Plugin API 1.5): kelompok `tanggal` di baca agregat; `ctx.envelopes(saldo=True)` mengisi `AmplopView.sisa` (rumus
+saldo inti); kartu manifest boleh `untuk: "karyawan"`, dan fungsinya hanya bisa membaca catatan milik karyawan itu
+sendiri lewat `ctx.ringkas_pemasukan_saya` (baca keuangan ruang tetap `khusus_admin`).
 """
 from app.plugins.sdk.context import (
     AksiRoute, AmplopView, AnggotaView, DataPlugin, GalatRute, IzinDitolak, Jawaban, Laporan, NilaiTidakSah,

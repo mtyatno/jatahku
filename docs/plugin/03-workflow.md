@@ -143,7 +143,7 @@ Temuan keamanan di sesi mana pun dikerjakan sebelum fitur dilanjutkan. Tujuh PR 
 | --- | --- | --- |
 | Ruang tidak pernah dari body | Setiap endpoint tulis menentukan ruang dari objeknya; tes IDOR: user ruang A tidak bisa membaca atau menulis objek ruang B walau tahu ID-nya | R2, R3 |
 | Batasan ditegakkan di server | Batas nominal, amplop terkunci, foto nota, dan jendela ubah juga berlaku lewat aplikasi, antrean offline, dan kirim ulang (`client_ref`); pemeriksaan di frontend hanya tampilan | R5 |
-| Karyawan tidak melihat laporan | Laba, kas, omzet, dan saldo yang tidak diizinkan tidak bocor lewat endpoint mana pun, termasuk `/dashboard/data`, ekspor, dan `/laba` | R5, B1, U3, U6 |
+| Karyawan tidak melihat laporan | Laba, kas, omzet, dan saldo yang tidak diizinkan tidak bocor lewat endpoint mana pun, termasuk `/dashboard/data`, ekspor, dan `/laba`. Kartu Fitur Tambahan untuk karyawan hanya memuat catatan karyawan itu sendiri | R5, B1, U3, U4, U6 |
 | Ruang keluarga tetap pribadi | Tidak ada kueri lintas ruang selain Prive; kamus per ruang tidak terbawa; tawaran "pengeluaran pribadi" tidak tercatat untuk admin | R7, R8 |
 | Plugin sebagai tamu | `PluginContext` memeriksa izin di setiap panggilan dan mencatat audit; validator CI menolak perintah bot yang menulis | H1, H2 |
 | Isolasi plugin | Plugin yang dijeda atau dicopot tidak meninggalkan kartu, menu, perintah, atau job; saklar darurat bekerja dalam satu siklus muat ulang | U1 |

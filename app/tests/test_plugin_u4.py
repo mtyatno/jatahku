@@ -210,6 +210,14 @@ class BentukKartuTests(unittest.TestCase):
         self.assertEqual((d["value"], d["unit"], d["suffix"]), ("210000", "rp", "4 penjualan"))
         self.assertIn("November 2026", d["footer"])
 
+    def test_bulan_berjalan_tanpa_chip_banding(self):
+        """Bulan berjalan belum utuh: membandingkannya dengan bulan lalu yang utuh selalu tampak anjlok. Chip hanya
+        untuk bulan yang sudah selesai; angka bulan lalu tetap ada di kaki kartu."""
+        berjalan = {**self.lr, "berjalan": True}
+        self.assertEqual(self.sah("kpi", kartu_bu.omzet(berjalan))["chip"], "")
+        self.assertEqual(self.sah("kpi", kartu_bu.laba(berjalan))["chip"], "")
+        self.assertIn("bulan lalu Rp44.600.000", self.sah("kpi", kartu_bu.omzet(berjalan))["footer"])
+
     def test_teks_perubahan(self):
         self.assertEqual([teks.perubahan(v) for v in (D("0.0908"), D("-0.125"), D("0"), None)],
                          ["+9,1%", "-12,5%", "0%", ""])

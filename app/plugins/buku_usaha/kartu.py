@@ -12,11 +12,17 @@ from app.plugins.buku_usaha import teks
 SERATUS = Decimal("100")
 
 
+def _banding(lr: dict, kunci: str) -> str:
+    """Chip naik/turun dari bulan lalu, hanya untuk bulan yang sudah selesai: bulan berjalan belum utuh, jadi
+    bandingannya dengan bulan lalu yang utuh selalu tampak anjlok. Angka bulan lalu tetap ada di kaki kartu."""
+    return "" if lr.get("berjalan") else teks.perubahan(lr["perubahan"][kunci])
+
+
 def omzet(lr: dict) -> dict:
     return {
         "value": lr["omzet"], "unit": "rp",
         "suffix": teks.t("kartu_banyak_penjualan", banyak=lr["jumlah_penjualan"]),
-        "chip": teks.perubahan(lr["perubahan"]["omzet"]),
+        "chip": _banding(lr, "omzet"),
         "footer": teks.t("kartu_omzet_kaki", bulan=teks.nama_bulan(lr["periode"]),
                          lalu=teks.rupiah(lr["banding"]["omzet"])),
     }
@@ -26,7 +32,7 @@ def laba(lr: dict) -> dict:
     return {
         "value": lr["laba"], "unit": "rp",
         "suffix": teks.t("kartu_margin", margin=teks.persen(lr["margin"])) if lr["margin"] is not None else "",
-        "chip": teks.perubahan(lr["perubahan"]["laba"]),
+        "chip": _banding(lr, "laba"),
         "tone": "danger" if lr["laba"] < 0 else None,
         "footer": teks.t("kartu_laba_kaki", bulan=teks.nama_bulan(lr["periode"]), omzet=teks.rupiah(lr["omzet"]),
                          beban=teks.rupiah(lr["beban_total"])),
