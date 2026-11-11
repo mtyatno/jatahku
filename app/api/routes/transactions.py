@@ -597,10 +597,6 @@ async def batch_create_transactions(
         if not hid:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
             continue
-        if item.is_private and hid in usaha:   # ruang usaha tanpa pengeluaran privat (lihat catat_transaksi)
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
-                                                  error=PRIVAT_DITOLAK_MSG, kode=KODE_PRIVAT_DITOLAK))
-            continue
         if item.receipt_item_id:
             receipt_error = await _receipt_item_error(db, user, item.receipt_item_id)
             if receipt_error:
@@ -621,6 +617,12 @@ async def batch_create_transactions(
 
         if not is_spendable(envelope):
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=NOT_SPENDABLE_MSG))
+            continue
+        # Ruang usaha tanpa pengeluaran privat (lihat catat_transaksi). Urutannya sama dengan di sana, sesudah amplopnya
+        # terbukti boleh dipakai user: amplop pribadi anggota lain tetap "Envelope not found" (review keamanan #205).
+        if item.is_private and hid in usaha:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                  error=PRIVAT_DITOLAK_MSG, kode=KODE_PRIVAT_DITOLAK))
             continue
         batasan = await peran.batasan_karyawan(db, user.id, hid)
         try:
