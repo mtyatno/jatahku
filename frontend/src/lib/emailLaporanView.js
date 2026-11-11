@@ -50,7 +50,7 @@ export function barisKartu(k, zona) {
     {
       label: 'Penerima',
       nilai: `${k.penerima} / ${k.ambang_penerima}`,
-      nada: k.penerima > k.ambang_penerima ? 'bahaya' : 'biasa',
+      nada: k.penerima >= k.ambang_penerima ? 'bahaya' : 'biasa',
     },
     { label: 'Laju', nilai: `${desimal(k.laju_per_detik)} email/detik`, nada: 'biasa' },
   ];

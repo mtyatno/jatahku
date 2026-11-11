@@ -47,6 +47,11 @@ test('baris lain dan nada', () => {
   assert.equal(baris(dasar).Laju.nilai, '3 email/detik');
 });
 
+test('penerima bahaya mulai ambang (alarm pindah_penyedia berbunyi pada >= 300)', () => {
+  assert.equal(baris({ ...dasar, penerima: 299 }).Penerima.nada, 'biasa');
+  assert.equal(baris({ ...dasar, penerima: 300 }).Penerima.nada, 'bahaya');
+});
+
 test('teksAlarm', () => {
   assert.equal(teksAlarm('pindah_penyedia'), 'Saatnya pindah ke penyedia email transaksional (langkah di AGENTS.md).');
   assert.equal(teksAlarm('worker_mati'), 'Worker email tidak berjalan.');
