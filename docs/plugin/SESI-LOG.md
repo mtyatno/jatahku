@@ -4,6 +4,29 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## U3 · review keamanan terpisah · 2026-11-11 · pemilik produk + Claude
+
+**Review** (branch `plugin/u3-review-keamanan`; lanjutan PR #204 yang sudah di-merge; PR #207; tanpa migrasi)
+- Review "PR #204 terhadap 03-workflow.md bagian Keamanan lebih dulu dan AGENTS.md Plugin dan ruang" oleh sesi terpisah; deskripsi PR #204 dan entri U3 di log ini baru dibaca sesudah temuan selesai. Fokus: `host/ringkas.py`, `host/berkas.py` + `routes/plugins._kirim_berkas`, `buku_usaha/` (metrics, laporan, rute), `sdk/context.py`. Hasil: **tidak ada temuan tinggi**; 2 sedang, 1 rendah, beberapa info. Gerbang karyawan, ruang keluarga, plugin sebagai tamu, dan izin baru lulus; tidak ada kebocoran antar-ruang, amplop pribadi, atau transaksi privat.
+- Diperbaiki (tes merah dulu, commit `4c4881d`):
+  - **S1 (sedang, ketersediaan):** `jalankan_rute` menggambar berkas sebelum `db.commit()`: PDF mengantre semafor dua slot laporan berkala dan digambar sambil memegang koneksi dari kolam (5 + 10), tanpa batas frekuensi. Terukur: 2.000 baris 3,3–9,4 dtk, 5.000 baris 23,5 dtk. Kini `jalankan_rute` hanya memeriksa (`berkas.pesan` → `Pesanan` di `HasilRute.laporan`); `_kirim_berkas`: batas 10 berkas/menit per user (429 `terlalu_sering`, PDF + CSV satu ember, penyimpanan slowapi `auth.limiter`) → audit → `db.close()` → gambar.
+  - **S2 (sedang, gerbang Laporan aman):** `_csv_text` hanya melihat awal sel; Excel berpemisah daftar `;` (pengaturan regional berkoma desimal) memecah baris berkoma pada `;`, jadi keterangan karyawan `ayam;=1+1;` menjadi sel rumus di lembar pemilik. `berkas._teks_csv` memberi kutip pada karakter rumus sesudah `;`.
+  - **R1 (rendah):** `periksa` meloloskan `Decimal` NaN/Infinity/bereksponen raksasa (sel CSV 200 KB; PDF `decimal.InvalidOperation` lolos dari `plugin_gagal`). `berkas._angka_sah` (terhingga, < 10^18, ≤ 12 desimal, dari eksponen saja); galat apa pun saat menggambar → 500 `plugin_gagal`.
+- Tidak diubah (info): kelemahan `;` yang sama di `/export/csv` dan ekspor ZIP plugin (`export._csv_text`, di luar cakupan U3); `MAKS_BARIS` 5.000 masih berarti PDF ±23 dtk; `meta` transaksi bukan-privat terbaca di konteks job (sesuai docstring `ringkas.py`); `Content-Disposition` tidak di `expose_headers` CORS (web memakai nama cadangan); audit `laporan` kini sebelum menggambar.
+- Tes: unittest 3722 lulus (+12 di `test_plugin_u3_review.py`: 5 temuan, 7 probe yang lulus sejak awal) · node --test 750 (`src/lib`) + 25 (`src/native`) + 17 (`buku_usaha`) lulus · build ok · validator OK · `openapi_cek` tanpa perubahan memutus. Frontend tidak berubah (tab Laba rugi menampilkan `detail` 429 dari server).
+
+**Jebakan**
+- `abs(Decimal("1E+999999999"))` melempar `decimal.Overflow`: batas angka diperiksa lewat `adjusted()` dan eksponen, tanpa aritmetika.
+- Batas frekuensi laporan memakai penyimpanan bersama proses; tes yang mengunduh laporan lebih dari beberapa kali perlu `limiter.reset()` (lihat `U3ReviewDbTests.asyncSetUp`).
+- S2 dibuktikan dengan pengurai CSV berpemisah `;`, bukan Excel sungguhan (tidak tersedia di sesi review).
+
+**Cara melanjutkan**
+- Merge tanpa migrasi; `/cek-deploy 207`. Sesudah tayang: unduh PDF dan CSV satu bulan, buka CSV di Excel berbahasa Indonesia dengan keterangan uji `ayam;=1+1;` (harus tetap teks), dan coba unduh 11 kali semenit (yang ke-11 429).
+- Disarankan PR kecil: pindahkan penanganan `;` ke `export._csv_text` supaya `/export/csv` dan ekspor ZIP plugin ikut terlindung.
+- Lalu PR "privat dimatikan di ruang usaha" (#205) dan `/sesi-plugin U4` atau U5.
+
+---
+
 ## U3 · Laba rugi dan laporan · 2026-11-10 · pemilik produk + Claude
 
 **Selesai** (branch `plugin/u3-laba-rugi`; PR #204; tanpa migrasi; Plugin API 1.4; manifest Buku Usaha 0.3.0)
