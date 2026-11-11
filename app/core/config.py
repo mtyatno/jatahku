@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     # terbaca dan user mengatur ulang. Buat kunci:
     #   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     REPORT_SECRET_KEY: str = ""
+    # Laju worker email laporan (email per detik). Teks, diurai worker_email.laju_dari_pengaturan: kosong
+    # atau bukan angka = bawaan 3, di luar 0,1-20 = batas terdekat. Teks supaya nilai .env apa pun tidak
+    # menggagalkan Settings (dipakai bersama API).
+    EMAIL_LAPORAN_PER_DETIK: str = "3"
 
     model_config = {"env_file": "/opt/jatahku/.env", "extra": "ignore"}
 
