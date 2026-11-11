@@ -9,11 +9,18 @@ dulu") dijaga satu tempat untuk semua plugin:
   kata sandi (diunduh langsung oleh owner/admin yang sudah login; keputusan E U3). Paling banyak `MAKS_PDF_SERENTAK`
   sekaligus, di thread, berbagi semafor dengan laporan berkala.
 - **CSV** UTF-8 dengan BOM: setiap sel teks dari plugin lewat `_csv_text` (awalan rumus `= + - @` tab CR diberi kutip,
-  PR #136); angka ditulis sebagai angka, tanggal ISO.
+  PR #136); angka ditulis sebagai angka, tanggal ISO. Karakter rumus sesudah `;` di dalam teks juga diberi kutip
+  (`_teks_csv`, review #204 S2): Excel berpemisah daftar `;` (bawaan regional Indonesia) memecah baris pada `;`, jadi
+  `ayam;=1+1;` dari seorang karyawan tanpa ini menjadi sel rumus di lembar kerja pemilik.
 - **Batas** (`periksa`): jumlah tabel, kolom, baris, dan panjang teks; jenis sel hanya teks, `Decimal`, `int`, `date`,
-  atau None. Laporan yang melanggar = plugin bermasalah (500 `plugin_gagal`), bukan dipotong diam-diam.
+  atau None; angka harus terhingga, di bawah `MAKS_ANGKA`, dan paling banyak `MAKS_DESIMAL` angka di belakang koma
+  (review #204 R1: `Decimal("1E+200000")` adalah sel 200 KB). Laporan yang melanggar = plugin bermasalah (500
+  `plugin_gagal`), bukan dipotong diam-diam.
 - **Unduhan**: `Content-Disposition: attachment` dengan nama yang dirapikan host, `X-Content-Type-Options: nosniff`,
   `Cache-Control: no-store`, dan CSP `default-src 'none'; sandbox` (route `/p`). Setiap unduhan diaudit tanpa angka.
+- **Dua langkah** (review #204 S1): `pesan` memeriksa `Laporan` selagi fungsi plugin baru selesai (galat bentuk tetap
+  500 `plugin_gagal` atas nama plugin itu); `buat` menggambarnya **sesudah** route membatasi frekuensi, mengaudit, dan
+  melepas koneksi database, karena PDF ribuan baris makan detik dan mengantre semafor dua slot.
 """
 from __future__ import annotations
 
@@ -31,6 +38,9 @@ MAKS_BARIS = 5000            # total baris semua tabel
 MAKS_RINGKASAN = 12
 MAKS_CATATAN = 10
 MAKS_TEKS = 300
+MAKS_DIGIT = 18              # |nilai| sel angka < 10^18; nominal `Numeric(15, 2)` dan jumlahnya jauh di bawah ini
+MAKS_ANGKA = 10 ** MAKS_DIGIT
+MAKS_DESIMAL = 12            # angka di belakang koma sebuah `Decimal`
 FORMAT = {"pdf": ("application/pdf", "pdf"), "csv": ("text/csv; charset=utf-8", "csv")}
 
 
@@ -42,10 +52,33 @@ class Berkas:
     format: str
 
 
+@dataclass(frozen=True)
+class Pesanan:
+    """`Laporan` yang sudah diperiksa dan menunggu digambar (`pesan` → route → `buat`)."""
+    laporan: object
+    ruang: str
+    sekarang: datetime
+
+    @property
+    def format(self) -> str:
+        return self.laporan.format
+
+
+def _angka_sah(v) -> bool:
+    """Angka sel yang teksnya pendek: terhingga, |v| < `MAKS_ANGKA`, pecahan ≤ `MAKS_DESIMAL` angka. `Decimal`
+    diperiksa dari eksponennya saja, tanpa aritmetika dan tanpa menulis angkanya: `abs(Decimal("1E+999999999"))`
+    melempar `decimal.Overflow`, dan teksnya saja sudah menghabiskan memori."""
+    if isinstance(v, int):
+        return -MAKS_ANGKA < v < MAKS_ANGKA
+    return v.is_finite() and v.adjusted() < MAKS_DIGIT and v.as_tuple().exponent >= -MAKS_DESIMAL
+
+
 def _sel_sah(v) -> bool:
     if isinstance(v, bool):
         return False
-    return v is None or isinstance(v, (str, int, Decimal, date)) and not isinstance(v, datetime)
+    if isinstance(v, (int, Decimal)):
+        return _angka_sah(v)
+    return v is None or isinstance(v, (str, date)) and not isinstance(v, datetime)
 
 
 def _teks(v, nama: str, maks: int = MAKS_TEKS) -> str:
@@ -103,12 +136,22 @@ def nama_berkas(nama: str, ext: str) -> str:
 
 
 # ── CSV ──────────────────────────────────────────────────────────────────
-def _sel_csv(v):
+_RUMUS_SESUDAH_PEMISAH = re.compile(r"(;\s*)(?=[=+\-@])")
+
+
+def _teks_csv(v: str) -> str:
+    """Sel teks CSV: spasi dirapatkan (tanpa baris baru atau tab), dipotong `MAKS_TEKS`, lalu karakter rumus di awal sel
+    (`_csv_text`, PR #136) **dan sesudah setiap `;`** diberi kutip. Berkas ini berpemisah koma, tetapi Excel dengan
+    pemisah daftar `;` membukanya dengan memecah baris pada `;`: bagian teks sesudah `;` menjadi awal sel baru."""
     from app.api.routes.export import _csv_text
+    return _csv_text(_RUMUS_SESUDAH_PEMISAH.sub(r"\1'", " ".join(v.split())[:MAKS_TEKS]))
+
+
+def _sel_csv(v):
     if v is None:
         return ""
     if isinstance(v, str):
-        return _csv_text(" ".join(v.split())[:MAKS_TEKS])
+        return _teks_csv(v)
     if isinstance(v, Decimal):
         return format(v, "f")
     if isinstance(v, date):
@@ -324,8 +367,16 @@ def _muat(dok, teks: str, lebar: float, tebal: bool, ukuran: float, minimal: flo
     return teks
 
 
+def pesan(lap, *, ruang: str, sekarang: datetime) -> Pesanan:
+    """`Laporan` dari fungsi plugin → `Pesanan` (sudah lewat `periksa`; `TypeError`/`ValueError` bila tidak sah).
+    Murah dan tanpa I/O: dipanggil `titik.jalankan_rute` selagi transaksi database permintaan masih terbuka."""
+    periksa(lap)
+    return Pesanan(laporan=lap, ruang=ruang, sekarang=sekarang)
+
+
 async def buat(lap, *, ruang: str, sekarang: datetime) -> Berkas:
-    """`Laporan` → `Berkas`. Diperiksa dulu (`periksa`); PDF di thread lewat semafor laporan berkala."""
+    """`Laporan` → `Berkas`. Diperiksa dulu (`periksa`); PDF di thread lewat semafor laporan berkala. Pemanggil sudah
+    melepas koneksi database (`routes/plugins._kirim_berkas`): menunggu giliran semafor tidak menahan kolam."""
     periksa(lap)
     media, ext = FORMAT[lap.format]
     if lap.format == "csv":

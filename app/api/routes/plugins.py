@@ -9,6 +9,8 @@
 - `GET /ruang/{ruang_id}/plugins/{plugin_id}/ekspor?format=json|csv` (U1) — semua data tabel plugin di ruang itu,
   juga saat dijeda atau arsip (layar copot, ADR-P15); ruang dari path, owner/admin. CSV = ZIP satu berkas per tabel,
   sel teks dengan anti formula-injection (`export._csv_text`, PR #136).
+- Berkas laporan dari `/p/…` (U3, `_kirim_berkas`): paling banyak `BATAS_LAPORAN` per user (429 `terlalu_sering`),
+  diaudit, lalu digambar sesudah koneksi database permintaan dilepas (review #204 S1).
 - `/p/{plugin_id}/{path}` (U1, semua metode) — endpoint plugin dari manifest `routes` (`@plugin.rute`): ruang dari
   header (`ruang_aktif`; karyawan 403 lewat gerbang R5 karena route ini di luar `KARYAWAN_BOLEH`), plugin harus aktif
   di ruang itu untuk user ini, lalu fungsi plugin (`app/plugins/host/titik.jalankan_rute`). Data yang disentuh hanya
@@ -20,6 +22,7 @@ Router `/ruang` di sini hanya berisi rute plugin; `/ruang` milik R4 boleh menamb
 import csv
 import io
 import json
+import logging
 import zipfile
 from datetime import datetime, timezone
 from typing import Annotated
@@ -27,14 +30,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
+from limits import parse as _batas
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes.auth import limiter
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import HouseholdRole, User
 from app.plugins.host import siklus
 from app.services.ruang import RuangAktif, RuangDitolak, keanggotaan, ruang_jenis, ruang_objek
+
+log = logging.getLogger("jatahku.plugins")
 
 router = APIRouter()
 ruang_router = APIRouter()
@@ -296,18 +303,46 @@ async def rute_plugin(
         await setelah_commit.batal(db)       # mis. lepas kunci `client_ref` (review #201 T5)
         raise
     await setelah_commit.jalankan(db)
-    if hasil.berkas is not None:
-        return await _kirim_berkas(db, hid, plugin_id, user, path, hasil.berkas)
+    if hasil.laporan is not None:
+        return await _kirim_berkas(db, hid, plugin_id, user, path, hasil.laporan)
     if hasil.status == 204:
         return Response(status_code=204)
     return JSONResponse(status_code=hasil.status, content=hasil.data)
 
 
-async def _kirim_berkas(db: AsyncSession, hid, plugin_id: str, user: User, path: str, b) -> Response:
+# Berkas laporan plugin per user per menit, PDF dan CSV satu ember (review #204 S1). Sama dengan PDF laporan berkala
+# (`laporan.SCOPE_BATAS_PDF`, 10/menit): keduanya berbagi semafor gambar dua slot (`laporan.pdf._semafor_pdf`).
+BATAS_LAPORAN = "10/minute"
+SCOPE_BATAS_LAPORAN = "laporan_plugin"
+_BATAS_LAPORAN = _batas(BATAS_LAPORAN)
+
+
+def _batasi_laporan(user_id) -> None:
+    """429 `terlalu_sering` bila user ini sudah meminta `BATAS_LAPORAN` berkas. Kuncinya user yang terautentikasi,
+    bukan teks header (lihat `app/core/rate_limit.py`); penyimpanan sama dengan batas frekuensi lain (slowapi)."""
+    if limiter.enabled and not limiter.limiter.hit(_BATAS_LAPORAN, SCOPE_BATAS_LAPORAN, f"user:{user_id}"):
+        raise RuangDitolak(kode="terlalu_sering", detail="Terlalu sering mengunduh laporan. Coba lagi sebentar lagi.",
+                           status_code=429)
+
+
+async def _kirim_berkas(db: AsyncSession, hid, plugin_id: str, user: User, path: str, pesanan) -> Response:
     """Laporan plugin (U3) sebagai lampiran: nama dari host, tidak pernah ditampilkan di origin aplikasi (nosniff,
-    CSP sandbox), tidak disimpan cache. Setiap unduhan diaudit tanpa angka."""
-    siklus._audit(db, hid, plugin_id, user.id, "laporan", format=b.format, rute=("/" + path)[:80])
+    CSP sandbox), tidak disimpan cache. Setiap unduhan diaudit tanpa angka.
+
+    Urutan (review #204 S1): batas frekuensi → audit (commit) → koneksi database dilepas → gambar. PDF ribuan baris
+    makan detik dan mengantre semafor dua slot bersama laporan berkala; koneksi dari kolam (5 + 10 untuk seluruh API)
+    tidak boleh tertahan selama itu, seperti `laporan.unduh_pdf_laporan`. Galat saat menggambar = 500 `plugin_gagal`."""
+    from app.plugins.host import berkas as berkas_host
+    _batasi_laporan(user.id)
+    siklus._audit(db, hid, plugin_id, user.id, "laporan", format=pesanan.format, rute=("/" + path)[:80])
     await db.commit()
+    await db.close()
+    try:
+        b = await berkas_host.buat(pesanan.laporan, ruang=pesanan.ruang, sekarang=pesanan.sekarang)
+    except Exception:
+        log.exception("laporan plugin %s (%s) gagal digambar", plugin_id, pesanan.format)
+        raise RuangDitolak(kode="plugin_gagal", status_code=500,
+                           detail=f"{siklus.manifest_atau_404(plugin_id).name} sedang bermasalah. Coba lagi nanti.")
     return Response(b.isi, media_type=b.media, headers={
         "Content-Disposition": f'attachment; filename="{b.nama}"',
         "X-Content-Type-Options": "nosniff",
