@@ -767,6 +767,44 @@ class AntreanTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(penuh, False)
         self.assertEqual(await self.antrean(rids[1]), ("menunggu", None, 0, None, None))
 
+    async def test_sesudah_laporan_menerima_setiap_hasil_sekali(self):
+        # F-4: `sesudah_laporan` dipanggil sekali per laporan yang diproses dengan hasilnya, None bila pemrosesan
+        # melempar (dicatat); laporan yang klaimnya kalah (tidak diproses) tidak dilaporkan.
+        nama = ("Ani", "Budi", "Citra", "Dedi", "Eka", "Fajar")
+        uids = [await self.user(n, terverifikasi=(n != "Budi")) for n in nama]
+        rids = [await self.laporan(u, terbit=T0 - (9 - i) * MENIT, percobaan=2 if n == "Dedi" else 0)
+                for i, (n, u) in enumerate(zip(nama, uids))]
+        self.pengirim.hasil = lambda alamat: not alamat.startswith(("citra", "dedi"))
+        asli = antrean_email._proses_laporan
+
+        async def proses(report_id, jam):
+            if report_id == rids[4]:
+                raise RuntimeError("putus")
+            if report_id == rids[5]:   # jalan lain lebih dulu menyelesaikannya: klaim kalah
+                async with self.Session() as db:
+                    (await db.get(Report, report_id)).email_status = "terkirim"
+                    await db.commit()
+            return await asli(report_id, jam)
+
+        diterima = []
+        with patch.object(antrean_email, "_proses_laporan", proses), self.assertLogs("jatahku.laporan", "ERROR"):
+            hasil, penuh = await antrean_email.putaran_antrean(lambda: T0, sesudah_laporan=diterima.append)
+
+        self.assertEqual(diterima, ["terkirim", "dilewati", "dicoba_lagi", "gagal", None])
+        self.assertEqual(hasil, {"terkirim": 1, "gagal": 1, "dilewati": 1, "dicoba_lagi": 1})
+        self.assertIs(penuh, False)
+
+    async def test_galat_sesudah_laporan_diteruskan(self):
+        rids = [await self.laporan(await self.user(n), terbit=T0 - (9 - i) * MENIT)
+                for i, n in enumerate(("Ani", "Budi"))]
+
+        def kait(_):
+            raise RuntimeError("kait")
+
+        with self.assertRaisesRegex(RuntimeError, "kait"):
+            await antrean_email.putaran_antrean(lambda: T0, sesudah_laporan=kait)
+        self.assertEqual(await self.antrean(rids[1]), ("menunggu", None, 0, None, None))   # tidak ada klaim lagi
+
     # ------------------------------------------------------------------ dihidupkan lagi
 
     async def test_hidupkan_lagi_dalam_jendela(self):

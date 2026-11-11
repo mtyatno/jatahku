@@ -9,8 +9,17 @@ berhenti. Sebelum setiap laporan: pacu (`1 / laju` detik dari awal kiriman sebel
 `JEDA_TANDA` detik. Berhenti (SIGTERM/SIGINT) dicek sebelum setiap putaran dan oleh putaran tepat sebelum klaim, jadi
 tidak ada putaran atau klaim baru; kiriman yang sedang berjalan diselesaikan, lalu keluar 0.
 
-Tanda hidup: kunci Redis `KUNCI_HIDUP`, waktu UTC ISO, TTL `TTL_HIDUP`. Redis tidak terjangkau dicatat sekali per
-putaran (teks tetap, tanpa pesan galatnya) dan pengiriman tetap jalan. Log tanpa alamat, token, atau kata sandi.
+Pemutus: hasil setiap laporan yang diproses (`sesudah_laporan`) dihitung; `gagal`, `dicoba_lagi`, dan galat (None)
+berturut-turut menambah hitungan, `terkirim` mereset, `dilewati` membiarkan. Pada `BATAS_GAGAL_BERUNTUN` putaran itu
+tidak mengklaim apa pun lagi, worker mencatat WARNING dan menunggu `JEDA_GANGGUAN` detik (terputus seketika oleh
+permintaan berhenti), mereset hitungan, lalu lanjut. Jadi gangguan SMTP atau kuota penyedia menghabiskan percobaan
+paling banyak lima laporan per jeda, bukan seluruh antrean.
+
+Tanda hidup: kunci Redis `KUNCI_HIDUP`, waktu UTC ISO, TTL `TTL_HIDUP`; artinya "putaran terakhir berjalan". Ditulis di
+awal setiap putaran kecuali putaran yang langsung menyusul putaran galat (mis. database tidak terjangkau), yang
+menulisnya begitu ia selesai; putaran pertama selalu menulis. Redis tidak terjangkau dicatat sekali per putaran (teks
+tetap, tanpa pesan galatnya) dan pengiriman tetap jalan. Log tanpa alamat, token, atau kata sandi; hanya logger
+`jatahku` yang mencatat INFO, pihak ketiga (mis. fontTools) mulai WARNING (`pasang_log`).
 """
 import asyncio
 import logging
@@ -28,21 +37,26 @@ from app.services.laporan import antrean_email
 logger = logging.getLogger("jatahku.laporan")
 
 KUNCI_HIDUP = "laporan:worker_email:hidup"
-TTL_HIDUP = 900
+TTL_HIDUP = 7200  # 2 jam: alarm masih bisa menyebut "sejak HH:MM"; hidup tetap ≤ 10 menit (pantau_email)
 JEDA_KOSONG = 60.0
 JEDA_TANDA = 60.0
 LAJU_MIN = 0.1
 LAJU_MAKS = 20.0
 LAJU_BAWAAN = 3.0
 BATAS_WAKTU_REDIS = 5   # detik; Redis yang menggantung tidak boleh menahan pengiriman
+BATAS_GAGAL_BERUNTUN = 5
+JEDA_GANGGUAN = 300.0
+_HASIL_GAGAL = ("gagal", "dicoba_lagi", None)
 
 
 def laju_dari_pengaturan(nilai) -> float:
-    """Laju (email per detik) dari `EMAIL_LAPORAN_PER_DETIK` (teks .env, atau angka). Kosong/None → bawaan; bukan
-    angka → bawaan dengan peringatan (tanpa isinya: bisa saja rahasia salah baris); di luar `LAJU_MIN`-`LAJU_MAKS` →
-    batas terdekat dengan peringatan."""
+    """Laju (email per detik) dari `EMAIL_LAPORAN_PER_DETIK` (teks .env, atau angka). Kosong/None → bawaan; satu koma
+    dibaca sebagai pemisah desimal ("0,5" → 0.5); bukan angka → bawaan dengan peringatan (tanpa isinya: bisa saja
+    rahasia salah baris); di luar `LAJU_MIN`-`LAJU_MAKS` → batas terdekat dengan peringatan."""
     if nilai is None or isinstance(nilai, bool) or (isinstance(nilai, str) and not nilai.strip()):
         return LAJU_BAWAAN
+    if isinstance(nilai, str) and nilai.count(",") == 1 and "." not in nilai:
+        nilai = nilai.replace(",", ".")
     try:
         laju = float(nilai)
     except (TypeError, ValueError):
@@ -116,6 +130,18 @@ async def jalankan(
         redis = aioredis.from_url(settings.REDIS_URL, socket_timeout=BATAS_WAKTU_REDIS,
                                   socket_connect_timeout=BATAS_WAKTU_REDIS)
     pemacu = Pemacu(laju, jam=jam, tidur=tidur)
+    gangguan = {"beruntun": 0}
+    putaran_gagal = False
+
+    def sesudah_laporan(keluaran):
+        if keluaran == "terkirim":
+            gangguan["beruntun"] = 0
+        elif keluaran in _HASIL_GAGAL:
+            gangguan["beruntun"] += 1
+
+    def harus_berhenti() -> bool:
+        return berhenti.is_set() or gangguan["beruntun"] >= BATAS_GAGAL_BERUNTUN
+
     logger.info("worker email laporan menyala: %s email per detik", laju)
     try:
         while not berhenti.is_set():
@@ -132,17 +158,31 @@ async def jalankan(
                 if jam() - tanda["terakhir"] >= JEDA_TANDA:
                     await tulis_tanda()
 
-            await tulis_tanda()
+            tanda_ditunda = putaran_gagal   # putaran sebelumnya galat: tanda hidup menunggu putaran ini selesai
+            if not tanda_ditunda:
+                await tulis_tanda()
             try:
-                hasil, penuh = await putaran(sebelum_laporan=sebelum_laporan, berhenti=berhenti.is_set)
-            except Exception:
-                logger.exception("putaran email laporan gagal; dicoba lagi dalam %s detik", JEDA_KOSONG)
-                penuh = False
-            else:
+                hasil, penuh = await putaran(sebelum_laporan=sebelum_laporan, berhenti=harus_berhenti,
+                                             sesudah_laporan=sesudah_laporan)
                 if any(hasil.values()):
                     logger.info("email laporan: %s terkirim, %s gagal, %s dilewati, %s dicoba lagi",
                                 hasil["terkirim"], hasil["gagal"], hasil["dilewati"], hasil["dicoba_lagi"])
-            if not penuh and not berhenti.is_set():
+            except Exception:
+                logger.exception("putaran email laporan gagal; dicoba lagi dalam %s detik", JEDA_KOSONG)
+                putaran_gagal, penuh = True, False
+            else:
+                putaran_gagal = False
+                if tanda_ditunda:
+                    await tulis_tanda()
+            if berhenti.is_set():
+                break
+            if gangguan["beruntun"] >= BATAS_GAGAL_BERUNTUN:
+                logger.warning("email laporan: %s kiriman berturut-turut gagal; worker jeda %s menit",
+                               BATAS_GAGAL_BERUNTUN, int(JEDA_GANGGUAN // 60))
+                await tunggu_kosong(berhenti, JEDA_GANGGUAN)
+                gangguan["beruntun"] = 0
+                continue
+            if not penuh:
                 await tunggu_kosong(berhenti, JEDA_KOSONG)
     finally:
         if milik_sendiri:
@@ -158,9 +198,18 @@ async def _utama() -> None:
     await jalankan(berhenti)
 
 
+def pasang_log(aliran=None) -> None:
+    """Log worker ke `aliran` (bawaan stderr, untuk journald): akar WARNING, supaya pustaka pihak ketiga (fontTools
+    mencatat ~70 baris INFO per PDF) tidak membanjiri jurnal; logger `jatahku` (`jatahku.laporan`, `jatahku.email`)
+    INFO."""
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr if aliran is None else aliran,
+                        format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("jatahku").setLevel(logging.INFO)
+
+
 def main() -> None:
-    """Pasang log (INFO ke stderr, untuk journald) dan penangan SIGTERM/SIGINT, jalankan sampai berhenti, keluar 0."""
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+    """Pasang log (`pasang_log`) dan penangan SIGTERM/SIGINT, jalankan sampai berhenti, keluar 0."""
+    pasang_log()
     asyncio.run(_utama())
 
 
