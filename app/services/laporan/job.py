@@ -62,7 +62,7 @@ from app.models.models import (
 from app.services import notification_service
 from app.services.advisor import advisor_cache
 from app.services.household_cycle import current_payday, household_lock, member_rows
-from app.services.laporan.antrean_email import hasil_kosong, proses_antrean_email, status_awal
+from app.services.laporan.antrean_email import AWALAN_AKUN_NONAKTIF, hasil_kosong, proses_antrean_email, status_awal
 from app.services.laporan.muat import muat_bahan
 from app.services.laporan.susun import ada_aktivitas, susun_bulanan
 from app.services.rollover import create_monthly_snapshots
@@ -72,7 +72,6 @@ logger = logging.getLogger("jatahku.laporan")
 # Laporan periode yang tutup lebih lama dari ini tidak diterbitkan lagi (server mati beberapa hari tetap terkejar).
 JENDELA_TERBIT_HARI = 7
 _PESAN_NOTIFIKASI = "Lihat bagaimana periode kemarin berjalan."
-_AWALAN_AKUN_NONAKTIF = ("deleted_", "banned_")
 
 
 class RefreshSnapshotGagal(Exception):
@@ -91,7 +90,7 @@ def penerima_layak(user, period_end: date) -> bool:
     """Apakah `user` boleh menerima laporan periode yang berakhir `period_end`: bukan akun terhapus atau diblokir
     (email berawalan `deleted_`/`banned_`; akun tanpa email tetap layak) dan akunnya dibuat paling lambat
     `period_end` menurut tanggal server (UTC), seperti tanggal tutup periode."""
-    if (user.email or "").startswith(_AWALAN_AKUN_NONAKTIF):
+    if (user.email or "").startswith(AWALAN_AKUN_NONAKTIF):
         return False
     return _tanggal_utc(user.created_at) <= period_end
 

@@ -71,6 +71,8 @@ MAKS_PERCOBAAN = 3
 JEDA_COBA_ULANG = timedelta(minutes=55)
 BATAS_MENGIRIM = timedelta(minutes=30)
 KELOMPOK = 100
+# Akun terhapus/diblokir (email diganti berawalan ini); tidak pernah dikirimi laporan. Dipakai job.py dan pantau_email.py.
+AWALAN_AKUN_NONAKTIF = ("deleted_", "banned_")
 
 _LOG_KUNCI_TIDAK_ADA = "REPORT_SECRET_KEY kosong atau tidak valid: email laporan user %s dikirim tanpa lampiran PDF"
 _LOG_TOKEN_TAK_TERBACA = (
