@@ -220,17 +220,19 @@ Prive (R8):
 
 Kedua sisi tersimpan di `incomes` dengan `kind = "prive"` (v0 menulis `keluar.transaction_id`; diubah di R8 supaya prive tidak pernah menjadi transaksi pengeluaran). Akibatnya: prive tidak dihitung sebagai beban dan tidak mengurangi laba (U3 menghitung beban dari transaksi); `GET /incomes/` di ruang usaha menampilkan sisi keluar sebagai `type: "transfer"`, `transfer: null`, `kind: "prive"` (riwayat web sekarang melewatinya), dan di ruang keluarga sisi masuk sebagai `type: "income"`, `kind: "prive"`. Hapus atau batalkan prive belum ada.
 
-## 3. Catat cepat (R7, U5) — **v1 untuk saran amplop, sumber, dan aturan (R7)**; `jenis_catatan` dan `kontak` masih v0 (U5)
+## 3. Catat cepat (R7, U5) — **v1 untuk saran amplop, sumber, dan aturan (R7); `jenis_catatan` dan `kontak` v1 (U5, PR plugin/u5-catat-cepat-advisor)**
 
 Endpoint yang ada tetap; field baru hanya bertambah. Ruang dari header (membaca), karena saran tidak menulis apa pun.
 Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dikirim terpisah dari keterangan.
 
 ```jsonc
-// POST /transactions/suggest-envelope {"description": "kardus 50 pcs", "amount": 125000}   // amount opsional (R7)
+// POST /transactions/suggest-envelope {"description": "kardus 50 pcs", "amount": 125000, "jenis": "pengeluaran"}
+//   amount opsional (R7). jenis opsional (U5): "pengeluaran" | "penjualan" = jenis yang sedang dipilih user di Catat
+//   cepat; menentukan peran kontak yang dicari. Nilai lain → 422.
 {
   "envelope_id": "…", "envelope_name": "Operasional", "confident": true,          // field lama, tetap
   "sumber": {"jenis": "kamus_ruang", "kali": 4, "diajarkan_oleh": "Bagas", "oleh_saya": false} | null,
-  //   jenis: kata_saya | kamus_ruang | kamus_plugin (titik `nlp_kamus`, H2) | kamus_kategori | nama_amplop (U5 menambah kontak)
+  //   jenis: kata_saya | kamus_ruang | kamus_plugin (titik `nlp_kamus`, H2) | kamus_kategori | nama_amplop
   //   kali: kata_saya dan kamus_ruang = hitungan kata yang cocok yang paling sering diajarkan (≈ jumlah catatan);
   //   diajarkan_oleh/oleh_saya: hanya kamus_ruang (nama null bila pengajarnya pemanggil sendiri atau akunnya terhapus).
   //   Karyawan: kamus_ruang hanya {"jenis": "kamus_ruang"} tanpa kali, diajarkan_oleh, oleh_saya (review keamanan
@@ -239,7 +241,17 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
              {"kode": "persetujuan", "teks": "Di atas batasmu Rp1.000.000: menunggu persetujuan admin."}]
   //   batasan karyawan untuk `amount` (kosong untuk owner/admin, ruang keluarga, atau tanpa amount); juga dijawab
   //   bila description kosong. Hanya tampilan: penegakan tetap di jalur catat (§2, kode §7).
-  // U5 (v0): "jenis_catatan": "pengeluaran" | "penjualan" | …, "kontak": {"id", "nama", "peran"} | null
+  "jenis_catatan": "penjualan" | "modal" | "pinjaman" | null,                      // U5, selalu ada
+  //   Jenis catatan dari kata atau frasa utuh di keterangan (`nlp_jenis` Fitur Tambahan yang aktif di ruang header
+  //   untuk user itu). null = tidak terdeteksi (klien tetap di jenis yang dipilih; bawaan pengeluaran). Karyawan
+  //   hanya mendapat "penjualan", dan hanya bila batasannya mengizinkan penjualan. Tanpa plugin berkamus jenis, di
+  //   ruang keluarga, atau keterangan kosong: null, tanpa kueri tambahan.
+  "kontak": {"id": "…", "nama": "UD Sumber Unggas", "peran": "pemasok", "plugin": "buku_usaha"} | null   // U5, selalu ada
+  //   Kontak Fitur Tambahan yang disebut di keterangan (`@plugin.kontak_catatan`), **hanya untuk pemilik dan admin**;
+  //   karyawan selalu null (fungsi plugin tidak dipanggil). peran mengikuti jenis yang berlaku: `jenis` dari
+  //   permintaan, lalu jenis terdeteksi, lalu pengeluaran (pengeluaran → pemasok, penjualan → pelanggan; modal dan
+  //   pinjaman tanpa kontak). Hanya saran: tidak menyimpan apa pun. Pemasok ikut tersimpan bila klien mengirimnya
+  //   sebagai `tambahan` di `POST /transactions/` (field form §5), pelanggan lewat form Penjualan (§6).
 }
 // POST /transactions/suggest-envelopes {"descriptions": [...]} → results[] dengan field lama + "sumber": {"jenis"} | null
 // Batas (R7, review keamanan #191): description ≤ 500 huruf, descriptions ≤ 100 item (lebih → 422); per user
@@ -247,8 +259,9 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
 ```
 
 Urutan cocok (`txn_nlp.cari_amplop`): kata yang dipelajari user sendiri (amplop di ruang ini) → kamus ruang (hanya bila
-ruang di header bertipe usaha; gerbangnya di kueri) → kamus Fitur Tambahan yang aktif di ruang itu (H2, `nlp_kamus`) →
-kamus kategori bawaan → nama amplop di keterangan. Karyawan:
+ruang di header bertipe usaha; gerbangnya di kueri) → kamus Fitur Tambahan yang aktif di ruang itu (H2, `nlp_kamus`;
+Buku Usaha sejak U5: kata bahan dan operasional → amplop bawaan Bahan dan Operasional) → kamus kategori bawaan → nama
+amplop di keterangan. Karyawan:
 hanya amplop yang diizinkan menjadi kandidat, jadi amplop terkunci tidak menutupi tebakan berikutnya; amplop terkunci
 tidak dikirim (daftar amplop karyawan dari `GET /envelopes/` sudah hanya yang diizinkan).
 
@@ -410,7 +423,7 @@ karyawan (`khusus_admin`, penyedianya tidak dipanggil). Kartu plugin `untuk: "ka
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H2, H3, U1, U2, U3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan), endpoint plugin + ekspor data (U1, PR plugin/u1-kerangka-buku-usaha), tulis pemasukan + field form + izin baru (U2, PR plugin/u2-penjualan-alokasi), dan baca agregat + berkas laporan (U3, PR plugin/u3-laba-rugi)**
+## 5. Fitur Tambahan / plugin (H1, H2, H3, U1–U5) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan), endpoint plugin + ekspor data (U1, PR plugin/u1-kerangka-buku-usaha), tulis pemasukan + field form + izin baru (U2, PR plugin/u2-penjualan-alokasi), dan baca agregat + berkas laporan (U3, PR plugin/u3-laba-rugi)**
 
 Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
@@ -511,6 +524,7 @@ Plugin menyumbang lewat kode di `app/plugins/<id>/__init__.py` (`plugin = Plugin
 - **Perintah bot (`bot_commands`).** Telegram dan chat web: perintah baca plugin dijawab satu pesan per ruang yang memasang plugin itu, berawalan `[Nama ruang]`. `audience: admin` hanya owner/admin (karyawan: "Laporan <ruang> hanya untuk admin ruang."); tanpa ruang yang aktif: "Perintah ini belum tersedia di ruangmu." Teks polos, tanpa tombol.
 - **Notifikasi (`notifications`).** Lewat `ctx.notify`, **hanya dari job** (konteks tanpa user; review keamanan #186): lonceng (`type` = `system`) dan Telegram, judul berawalan `[Nama ruang]`, `link` hanya `/p/<id>…`; hanya owner/admin ruang yang plugin-nya aktif untuk mereka; tidak pada jam tenang 21.00–07.00 waktu penerima; maksimal 2 per plugin per penerima per hari dan 1 per `kunci`. Tidak ada preferensi per jenis notifikasi sampai U6.
 - **Kamus Catat cepat (`nlp_kamus`).** Saran amplop (`POST /transactions/suggest-envelope(s)`, Kotak Struk) di ruang yang memasang plugin mencoba kamus plugin sesudah kata user dan kamus ruang (R7), sebelum kamus kategori inti (`sumber.jenis = kamus_plugin`, §3). Tidak dipakai di ruang lain.
+- **Deteksi catatan (`nlp_jenis`, `nlp_kontak`; U5, Plugin API 1.6).** `POST /transactions/suggest-envelope` menjawab `jenis_catatan` dan `kontak` (§3) dari plugin yang aktif di ruang header untuk user itu (`titik.deteksi_catatan`); rincian di "Deteksi catatan" di bawah.
 - **Field form (`form_fields`).** Validasi server `titik.periksa_field` untuk body `{"<plugin_id>": {"<key>": nilai}}`; field di luar plugin aktif atau manifest → 422 `field_tidak_sah`. Belum disambungkan ke body transaksi/pemasukan (U2).
 - **Job (`jobs`)** dan **cek (`checks`)**: tanpa permukaan API selain `peringatan` di §0.
 
@@ -616,6 +630,27 @@ Tanpa endpoint baru dan tanpa izin baru (instalasi lama tidak perlu menyetujui a
   keuangan yang terbuka untuk karyawan; konteks tanpa user (job) ditolak `bukan_user`; tanpa izin `tanpa_izin`.
 - Manifest `contributes.cards[].untuk`: `"umum"` (bawaan) atau `"karyawan"` (§4 "Kartu Fitur Tambahan per peran").
 
+### Deteksi catatan di Catat cepat — **v1 (U5, Plugin API 1.6)**
+
+Tanpa endpoint baru dan tanpa izin baru; hasilnya hanya keluar lewat `jenis_catatan` dan `kontak` di
+`POST /transactions/suggest-envelope` (§3), tidak di `suggest-envelopes` dan tidak di chat (ADR-P2).
+
+- Manifest `contributes.nlp_jenis`: jenis catatan (`penjualan`, `modal`, `pinjaman`) → 1–100 kata atau frasa (huruf
+  kecil/angka, 2–40 karakter). Host mencocokkannya sebagai **kata utuh** ("jual" tidak cocok dengan "jualan"); urutan
+  di manifest = urutan periksa, jadi frasa yang lebih khusus ditaruh lebih dulu. Cukup data, tanpa kode plugin.
+- Manifest `contributes.nlp_kontak: true` + `@plugin.kontak_catatan()` → `async (ctx, teks, peran) -> KontakCatatan |
+  None` (`peran`: `pemasok` atau `pelanggan`). Jenis fungsi ini **tidak boleh meminta izin inti apa pun**
+  (`IZIN_PER_JENIS["kontak_catatan"]` kosong): hanya membaca tabel plugin sendiri lewat `ctx.data()`, selalu ruang
+  konteks. Host **hanya memanggilnya untuk pemilik dan admin**; untuk karyawan fungsi tidak dipanggil dan `kontak`
+  selalu `null`. Keluaran diperiksa (`titik.rapikan_kontak`: `KontakCatatan`, id 1–64 huruf/angka/tanda hubung, peran
+  sama dengan yang diminta, nama ≤ 120 huruf); keluaran tidak sah atau fungsi yang gagal = `kontak: null`, saran
+  amplop tetap dijawab. Lebih dari 150 ms dicatat di log, seperti kartu.
+- Plugin dijeda, dicopot, kena saklar darurat, atau di luar flag tidak mendeteksi apa pun; ruang yang tidak memasang
+  plugin (termasuk ruang keluarga) tidak pernah memakai kamus atau kontaknya.
+- Di web, modul plugin boleh menyatakan `catatCepat: { aksi, jenis: [...] }` (`src/plugins/<id>/index.js`): jenis
+  terdeteksi yang dicatat lewat form aksi cepat itu, dibuka dari Catat cepat dengan props `isiAwal`
+  (`{ jenis, jumlah, keterangan, kontak_id }`).
+
 ### Berkas laporan dari rute — **v1 (U3, Plugin API 1.4)**
 
 - Rute **GET** boleh mengembalikan `Laporan(format: "pdf"|"csv", nama_berkas, judul, subjudul, ringkasan: ((label,
@@ -636,10 +671,11 @@ Tanpa endpoint baru dan tanpa izin baru (instalasi lama tidak perlu menyetujui a
   `Content-Security-Policy: default-src 'none'; sandbox`. Setiap unduhan diaudit `laporan` (`format`, `rute`; tanpa
   angka). Web menyimpannya lewat `api.unduhPluginRute` (lapisan native), tidak membukanya di tab aplikasi.
 
-## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha), alokasi + penjualan + field pengeluaran (U2), laba rugi + laporan (U3, PR plugin/u3-laba-rugi), kartu Beranda (U4, PR plugin/u4-kartu-beranda)**
+## 6. Buku Usaha (U1–U5) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha), alokasi + penjualan + field pengeluaran (U2), laba rugi + laporan (U3, PR plugin/u3-laba-rugi), kartu Beranda (U4, PR plugin/u4-kartu-beranda), saran AI Advisor + kamus Catat cepat (U5, PR plugin/u5-catat-cepat-advisor)**
 
 Semua di bawah `/p/buku_usaha/` (endpoint plugin §5: ruang dari header, owner/admin); 404 `plugin_tidak_aktif` bila
-Buku Usaha tidak aktif di ruang itu. Kartu Beranda v1 (U4, di bawah). Manifest 0.4.0 (`plugin_api >=1.5 <2.0`): izin
+Buku Usaha tidak aktif di ruang itu. Kartu Beranda v1 (U4), saran AI Advisor dan kamus Catat cepat v1 (U5), keduanya di bawah. Manifest 0.5.0
+(`plugin_api >=1.6 <2.0`): izin
 `envelopes:read`, `transactions:read`, `incomes:read`, `incomes:write`; instalasi lama menyetujui izin baru lewat
 `POST …/izin` (sebelum itu laba rugi dan laporan 403 `tanpa_izin`).
 
@@ -750,6 +786,43 @@ bulan tanggal akhirnya. Nominal berupa string desimal.
 
 Empat kartu pertama `default: true` (dicentang di tawaran saat pasang). Instalasi yang sudah aktif menambahkannya dari
 panel Fitur Tambahan ("Tambahkan kartu ke Beranda"); kartu masuk di akhir Beranda (Mode Atur setelah beta).
+
+
+### Saran AI Advisor (BU-*) — **v1 (U5, PR plugin/u5-catat-cepat-advisor)**
+
+Masuk kartu AI Advisor di ruang usaha (`GET /advisor/dashboard`, §5 "AI Advisor"): bentuk item sama dengan saran inti,
+`aturan` = kode di bawah, satu aksi `route` ke halaman Buku Usaha. Hanya pemilik dan admin; paling banyak satu saran
+Buku Usaha di `items`, saran merah atau kuning lainnya di `sisa`. BU-03 bernada `info`, jadi mengikuti aturan pilih inti:
+baru menjadi calon bila saran merah dan kuning di ruang itu kurang dari tiga. Tanpa izin baru. Angka dari `metrics.py`, syarat menyala di `aturan.py`
+(fungsi murni), kalimat dari `teks.py`.
+
+| Kode | Menyala bila | Angka | Nada, aksi |
+| --- | --- | --- | --- |
+| `BU-01` | Kas usaha (kartu Kas usaha U4: jumlah sisa amplop bersama) di bawah **kebutuhan dua minggu** | Kebutuhan dua minggu = pengeluaran amplop bersama selama 28 hari terakhir yang sudah lewat (sampai kemarin) ÷ 28 × 14; prive tidak ikut. "Cukup ±N hari" = kas ÷ rata-rata harian, dibulatkan ke bawah. Tanpa pengeluaran di jendela itu: tidak menyala | `warn`; `danger` bila cukup kurang dari 7 hari atau kas habis. `keyakinan` `sedang` bila catatan di jendela kurang dari 10. Aksi: Laba rugi |
+| `BU-02` | Prive bulan itu lebih besar dari laba bulan itu (aturan laba rugi U3) | Sampai tanggal 14 yang dinilai bulan lalu yang sudah utuh, sesudah itu bulan berjalan. `rupiah` = prive − laba (laba negatif dihitung 0) | `warn`. Aksi: Laba rugi |
+| `BU-03` | Ada amplop bersama bernama "Pajak" yang sisanya ≤ 0, dan omzet bulan ini (atau bulan lalu bila bulan ini masih 0) lebih dari 0 | Omzet menurut aturan laba rugi | `info`. Aksi: tab Alokasi omzet. Amplop Pajak dihapus atau diganti nama: tidak menyala |
+
+### Kamus Catat cepat — **v1 (U5)**
+
+Lewat titik `nlp_kamus`, `nlp_jenis`, dan `nlp_kontak` (§5 "Deteksi catatan"), hanya di ruang yang Buku Usaha-nya aktif:
+
+- **Amplop** (`nlp_kamus`): kata bahan (beras, ayam, tepung, …) → amplop bernama "Bahan"; kata operasional (kardus,
+  elpiji, listrik, gaji, ongkir, …) → "Operasional". Sesudah kata user dan kamus ruang, jadi koreksi anggota tetap
+  menang. Amplop yang diganti nama tidak lagi tertebak dari kamus ini.
+- **Jenis** (`nlp_jenis`): "setor modal", "tambah modal", … → `modal`; "terima pinjaman", "pinjaman cair", … →
+  `pinjaman`; "jual", "terjual", "laku", "terima pembayaran", "dp dari", … → `penjualan`.
+- **Kontak** (`kontak_catatan`): dari 500 kontak terbaru berperan itu di ruang konteks. Cocok bila nama lengkapnya
+  disebut, atau nama tanpa awalan badan usaha/sapaan (PT, CV, UD, Toko, Pak, Bu, …), atau kata pertama nama itu (≥ 4
+  huruf) untuk nama lebih dari satu kata; selalu per kata utuh. Sebutan terlengkap menang; dua kontak sama kuat =
+  tidak menebak. Kontak terhapus tidak cocok.
+- **Satuan** ("40 kg", "50 pax") tetap bagian keterangan; tidak ada field tersendiri.
+
+Di web (pemilik dan admin): kata penjualan memindahkan jenis Catat cepat ke Penjualan selama user belum memilih sendiri,
+dan jenis kembali ke jenis saat lembar dibuka bila kata itu hilang dari teks (`catatCepat.jenisBerikut`);
+pemasok terdeteksi ikut tersimpan sebagai `tambahan.buku_usaha.pemasok` (tidak untuk amplop pribadi); penjualan atas
+nama pelanggan, modal, dan pinjaman dilanjutkan di form Penjualan (`isiAwal`), karena hanya form itu yang membagi
+menurut alokasi omzet dan menyimpan jenis pemasukan. Karyawan: hanya jenis Penjualan yang dipilihkan, tanpa kontak dan
+tanpa form Fitur Tambahan (keputusan B U5).
 
 ## 7. Kode galat
 
