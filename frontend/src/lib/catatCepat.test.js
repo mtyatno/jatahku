@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, isiFormPlugin, jenisLain,
-  jenisTerdeteksi, kontakCatatan, labelSumber, perluCekPribadi, pesanAjari, pesanTerkunci, tambahanKontak,
+  amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, isiFormPlugin, jenisBerikut,
+  jenisLain, jenisTerdeteksi, kontakCatatan, labelSumber, perluCekPribadi, pesanAjari, pesanTerkunci, tambahanKontak,
   tawaranPribadi, uraiCatatan,
 } from './catatCepat.js';
 
@@ -133,6 +133,36 @@ test('jenisTerdeteksi: hanya pindah ke penjualan, dan hanya bila jenis itu boleh
   assert.equal(jenisTerdeteksi({ jenis_catatan: null }, semua), null);
   assert.equal(jenisTerdeteksi(null, semua), null);
   assert.equal(jenisTerdeteksi({ jenis_catatan: 'penjualan' }, null), null);
+});
+
+test('jenisBerikut: deteksi memindahkan ke penjualan, dan kembali ke jenis awal saat kata penjualannya hilang', () => {
+  const semua = ['pengeluaran', 'penjualan'];
+  const dasar = { jenisBoleh: semua, jenisMula: 'pengeluaran', manual: false };
+  assert.equal(jenisBerikut({ ...dasar, jenis: 'pengeluaran', saran: { jenis_catatan: 'penjualan' } }), 'penjualan');
+  assert.equal(jenisBerikut({ ...dasar, jenis: 'penjualan', saran: { jenis_catatan: 'penjualan' } }), 'penjualan');
+  // Teks diganti tanpa dikosongkan ("jual nasi box" → "setor modal" atau "kardus"): jenis yang tadi dipindahkan
+  // deteksi tidak boleh tertinggal di Penjualan.
+  assert.equal(jenisBerikut({ ...dasar, jenis: 'penjualan', saran: { jenis_catatan: null } }), 'pengeluaran');
+  assert.equal(jenisBerikut({ ...dasar, jenis: 'penjualan', saran: { jenis_catatan: 'modal' } }), 'pengeluaran');
+  assert.equal(jenisBerikut({ ...dasar, jenis: 'pengeluaran', saran: { jenis_catatan: null } }), 'pengeluaran');
+});
+
+test('jenisBerikut: pilihan user, lembar yang dibuka sebagai penjualan, dan saran yang gagal tidak mengubah jenis', () => {
+  const semua = ['pengeluaran', 'penjualan'];
+  // User memilih sendiri: deteksi tidak memindahkan ke arah mana pun.
+  assert.equal(jenisBerikut({ jenisBoleh: semua, jenisMula: 'pengeluaran', manual: true, jenis: 'pengeluaran',
+    saran: { jenis_catatan: 'penjualan' } }), 'pengeluaran');
+  assert.equal(jenisBerikut({ jenisBoleh: semua, jenisMula: 'pengeluaran', manual: true, jenis: 'penjualan',
+    saran: { jenis_catatan: null } }), 'penjualan');
+  // Lembar dibuka sebagai Penjualan (karyawan "Catat penjualan"): tanpa kata penjualan pun tetap Penjualan.
+  assert.equal(jenisBerikut({ jenisBoleh: semua, jenisMula: 'penjualan', manual: false, jenis: 'penjualan',
+    saran: { jenis_catatan: null } }), 'penjualan');
+  // Karyawan tanpa izin penjualan: tidak pernah dipindahkan.
+  assert.equal(jenisBerikut({ jenisBoleh: ['pengeluaran'], jenisMula: 'pengeluaran', manual: false, jenis: 'pengeluaran',
+    saran: { jenis_catatan: 'penjualan' } }), 'pengeluaran');
+  // Saran gagal dimuat (null): jangan menebak, biarkan.
+  assert.equal(jenisBerikut({ jenisBoleh: semua, jenisMula: 'pengeluaran', manual: false, jenis: 'penjualan',
+    saran: null }), 'penjualan');
 });
 
 test('jenisLain: modal dan pinjaman dicatat lewat form Fitur Tambahan, bukan Catat cepat', () => {

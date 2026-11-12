@@ -136,6 +136,17 @@ export function jenisTerdeteksi(saran, jenisBoleh) {
     ? 'penjualan' : null;
 }
 
+/**
+ * Jenis Catat cepat sesudah jawaban saran datang. Selama user belum memilih sendiri (`manual`), jenis mengikuti
+ * deteksi: ada kata penjualan → penjualan; tidak ada lagi (teks diganti tanpa dikosongkan) → kembali ke jenis saat
+ * lembar dibuka (`jenisMula`), supaya jenis yang tadi dipindahkan deteksi tidak tertinggal. Saran gagal dimuat
+ * (`null`) atau user sudah memilih: jenis tidak diubah.
+ */
+export function jenisBerikut({ saran, jenisBoleh, jenis, jenisMula, manual }) {
+  if (manual || !saran) return jenis;
+  return jenisTerdeteksi(saran, jenisBoleh) || jenisMula;
+}
+
 /** Jenis terdeteksi yang bukan jenis Catat cepat (modal, pinjaman): dicatat lewat form Fitur Tambahan. */
 export function jenisLain(saran) {
   const id = saran?.jenis_catatan;

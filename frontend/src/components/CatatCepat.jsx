@@ -20,7 +20,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import {
   JEDA_SARAN_MS, amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, isiFormPlugin,
-  jenisLain, jenisTerdeteksi, kontakCatatan, labelSumber, perluCekPribadi, pesanAjari, pesanTerkunci, tambahanKontak,
+  jenisBerikut, jenisLain, kontakCatatan, labelSumber, perluCekPribadi, pesanAjari, pesanTerkunci, tambahanKontak,
   tawaranPribadi, uraiCatatan,
 } from '../lib/catatCepat';
 import { hasilCatat, payloadCatat } from '../lib/ruangPeran';
@@ -87,8 +87,9 @@ export default function CatatCepat({
       const s = await api.saranCatat({ description: keterangan, amount: nominal || undefined, jenis });
       if (id !== urut.current) return;
       setSaran(s);
-      const terdeteksi = jenisTerdeteksi(s, jenisBoleh);
-      if (terdeteksi && !manual.current && terdeteksi !== jenis) { setJenis(terdeteksi); setPilihan(null); }
+      // Jenis mengikuti deteksi selama user belum memilih sendiri, ke dua arah (kata penjualannya hilang = kembali).
+      const berikut = jenisBerikut({ saran: s, jenisBoleh, jenis, jenisMula, manual: manual.current });
+      if (berikut !== jenis) { setJenis(berikut); setPilihan(null); }
       let k = null;
       if (perluCekPribadi({ jenis, keterangan, saran: s })) {
         k = await api.saranCatat({ description: keterangan }, { ruangKeluarga: true });
