@@ -192,6 +192,23 @@ class SaranBukuUsahaTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
         self.assertEqual(await self.kode(self.pemilik, self.usaha2), [])
         self.assertEqual(await self.kode(self.pemilik, self.rumah), [])
 
+    async def test_aturan_tidak_dijalankan_untuk_karyawan(self):
+        """Lapis pertama (host): aturan BU-* tidak dipanggil sama sekali untuk karyawan; `ctx` yang menolak baca
+        keuangan untuk karyawan (`khusus_admin`) hanya lapis kedua."""
+        from unittest.mock import patch
+        await self.isi()
+        asli, dipanggil = titik.panggil, []
+
+        async def catat(ctx, fn, *args):
+            dipanggil.append(ctx.peran)
+            return await asli(ctx, fn, *args)
+
+        with patch.object(titik, "panggil", catat):
+            self.assertEqual(await self.kode(self.karyawan), [])
+            self.assertEqual(dipanggil, [])
+            await self.kode(self.admin)
+            self.assertEqual(dipanggil, ["admin"] * 3)             # BU-01, BU-02, BU-03
+
     async def test_plugin_dijeda_tidak_meninggalkan_saran(self):
         await self.isi()
         await self.aksi("jeda")
@@ -199,7 +216,10 @@ class SaranBukuUsahaTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
 
     async def test_kartu_advisor_paling_banyak_satu_saran_buku_usaha(self):
         """Batas insight plugin per slot (H2 `daftar_per_plugin`): dua saran Buku Usaha yang sama-sama layak tampil
-        (BU-01 merah, BU-02 kuning) → satu di daftar utama, satu di "lainnya"."""
+        (BU-01 merah, BU-02 kuning) → satu di daftar utama, satu di "lainnya". Daftar utama dilonggarkan
+        (`daftar_maks` 10 lewat `advisor_konstanta`) supaya yang menahan BU-02 memang batas per plugin, bukan tiga
+        slot yang sudah terisi saran inti."""
+        import json
         from app.services.advisor import dashboard as adv
         await self.isi()
         async with self.Session() as db:
@@ -207,12 +227,14 @@ class SaranBukuUsahaTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
             awal = metrics.rentang(*metrics.bulan_prive(self.today))[0]
             await self.inc(db, "0", awal, kind="prive", alok=[(self.env["Prive"], "-500000")])
             db.add(AppSetting(key=adv.FLAG_KEY, value="*"))
+            db.add(AppSetting(key=adv.KONSTANTA_KEY, value=json.dumps({"daftar_maks": 10})))
             await db.commit()
             self.assertEqual(sorted(i.aturan for i in await titik.saran_advisor(db, self.pemilik, self.usaha)),
                              ["BU-01", "BU-02", "BU-03"])
             out = await adv.get_dashboard(self.pemilik, db, household_id=self.usaha)
         tampil = [i["aturan"] for i in out["advisor"]["items"] if i["aturan"].startswith("BU-")]
         sisa = [s["id"].split(":")[0] for s in out["advisor"]["sisa"] if s["id"].startswith("BU-")]
+        self.assertLess(len(out["advisor"]["items"]), 10)         # masih ada tempat: bukan `daftar_maks` yang menahan
         self.assertEqual(tampil, ["BU-01"])                       # kas habis lebih mendesak daripada prive
         self.assertIn("BU-02", sisa)
         item = next(i for i in out["advisor"]["items"] if i["aturan"] == "BU-01")
@@ -253,6 +275,24 @@ class ManifestDeteksiTests(unittest.TestCase):
         for kata in ([], ["Jual"], ["j"], ["jual!"], ["x" * 41]):
             with self.assertRaises(ValueError, msg=kata):
                 self._kontribusi(nlp_jenis={"penjualan": kata})
+
+    def test_kontak_catatan_tidak_boleh_meminta_izin_inti(self):
+        """`@plugin.kontak_catatan` hanya membaca tabel plugin sendiri: izin baca inti pun ditolak saat memuat."""
+        from app.plugins.host import kode
+        from app.plugins.sdk import Plugin
+        m = mf.Manifest.model_validate({
+            "id": "contoh", "name": "Contoh", "version": "1.0.0", "publisher": "Jatahku", "description": "Uji U5",
+            "engines": {"plugin_api": ">=1.6 <2.0"}, "space_types": ["usaha"],
+            "permissions": ["transactions:read"], "contributes": {"nlp_kontak": True}})
+        self.assertEqual(kode.IZIN_PER_JENIS["kontak_catatan"], frozenset())
+        bersih = Plugin("contoh")
+        bersih.kontak_catatan()(lambda ctx, teks, peran: None)
+        self.assertEqual(kode.cocokkan(m, bersih), [])
+        serakah = Plugin("contoh")
+        serakah.kontak_catatan(izin=["transactions:read"])(lambda ctx, teks, peran: None)
+        self.assertEqual(kode.cocokkan(m, serakah), [
+            "kontak_catatan 'kontak' meminta izin yang tidak boleh untuk kontak_catatan: transactions:read "
+            "(hanya baca; kirim hanya dari job)"])
 
     def test_versi_plugin_api(self):
         self.assertGreaterEqual(mf.PLUGIN_API_VERSION[:2], (1, 6))
@@ -394,6 +434,18 @@ class DeteksiCatatanTests(u4.U4DbDasar if HAS_AIOSQLITE else unittest.TestCase):
         # Modal dan pinjaman bukan catatan karyawan.
         s = await self.saran("setor modal 5jt", user=self.karyawan)
         self.assertIsNone(s["jenis_catatan"])
+
+    async def test_host_tidak_memberi_karyawan_jenis_modal_atau_pinjaman(self):
+        """Lapis pertama (host, `JENIS_KARYAWAN`): tanpa saringan batasan di route pun karyawan hanya mendapat
+        penjualan."""
+        async with self.Session() as db:
+            async def jenis(user, teks):
+                return (await titik.deteksi_catatan(db, user, self.usaha, teks))["jenis_catatan"]
+            self.assertEqual(await jenis(self.karyawan, "jual nasi box 30 pax"), "penjualan")
+            self.assertIsNone(await jenis(self.karyawan, "setor modal 5jt"))
+            self.assertIsNone(await jenis(self.karyawan, "pinjaman cair 10jt"))
+            self.assertEqual(await jenis(self.pemilik, "setor modal 5jt"), "modal")
+            self.assertEqual(await jenis(self.pemilik, "pinjaman cair 10jt"), "pinjaman")
 
     async def test_fungsi_kontak_tidak_dipanggil_untuk_karyawan(self):
         """Lapis pertama (host): fungsi plugin tidak dijalankan sama sekali untuk karyawan; `ctx.data()` yang menolak
