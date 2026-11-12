@@ -16,6 +16,7 @@ Titik ekstensi server dan bentuknya:
 | `plugin.perintah_bot(cmd)` | `async (ctx) -> str` | Telegram dan chat web, hanya baca |
 | `plugin.job(key)` | `async (ctx) -> None`, idempoten | scheduler tiap jam |
 | `plugin.field_form(target, key)` | `async (ctx, nilai) -> nilai` | `titik.periksa_field` (disambungkan ke form di U2) |
+| `plugin.kontak_catatan()` | `async (ctx, teks, peran) -> KontakCatatan atau None` | `titik.deteksi_catatan` (saran Catat cepat, U5) |
 | `plugin.rute(metode, pola)` | `async (ctx, Permintaan) -> data, Jawaban, atau Laporan (GET)` | `/p/<id>/<pola>` (U1; owner/admin, plugin aktif) |
 
 `ctx.notify(...)` mengirim notifikasi dari job (`notifications:send`); kamus Catat cepat (`nlp_kamus`) cukup data di
@@ -26,16 +27,19 @@ mengembalikan `Laporan` yang digambar host menjadi PDF atau CSV.
 U4 (Plugin API 1.5): kelompok `tanggal` di baca agregat; `ctx.envelopes(saldo=True)` mengisi `AmplopView.sisa` (rumus
 saldo inti); kartu manifest boleh `untuk: "karyawan"`, dan fungsinya hanya bisa membaca catatan milik karyawan itu
 sendiri lewat `ctx.ringkas_pemasukan_saya` (baca keuangan ruang tetap `khusus_admin`).
+U5 (Plugin API 1.6): deteksi catatan di Catat cepat. Jenis catatan cukup data di manifest (`nlp_jenis`); kontak yang
+disebut di teks lewat `plugin.kontak_catatan()` → `async (ctx, teks, peran) -> KontakCatatan | None`, hanya dipanggil
+untuk pemilik dan admin, tanpa izin baca inti (hanya `ctx.data()` tabel plugin sendiri).
 """
 from app.plugins.sdk.context import (
-    AksiRoute, AmplopView, AnggotaView, DataPlugin, GalatRute, IzinDitolak, Jawaban, Laporan, NilaiTidakSah,
-    PemasukanView, PenggunaView, PeriodeView, Permintaan, PluginContext, RencanaPengeluaran, RingkasanView, Saran,
+    AksiRoute, AmplopView, AnggotaView, DataPlugin, GalatRute, IzinDitolak, Jawaban, KontakCatatan, Laporan,
+    NilaiTidakSah, PemasukanView, PenggunaView, PeriodeView, Permintaan, PluginContext, RencanaPengeluaran, RingkasanView, Saran,
     TabelLaporan, TransaksiView,
 )
 from app.plugins.sdk.plugin import Plugin
 
 __all__ = [
-    "AksiRoute", "AmplopView", "AnggotaView", "DataPlugin", "GalatRute", "IzinDitolak", "Jawaban", "Laporan",
-    "NilaiTidakSah", "PemasukanView", "PenggunaView", "PeriodeView", "Permintaan", "Plugin", "PluginContext",
+    "AksiRoute", "AmplopView", "AnggotaView", "DataPlugin", "GalatRute", "IzinDitolak", "Jawaban", "KontakCatatan",
+    "Laporan", "NilaiTidakSah", "PemasukanView", "PenggunaView", "PeriodeView", "Permintaan", "Plugin", "PluginContext",
     "RencanaPengeluaran", "RingkasanView", "Saran", "TabelLaporan", "TransaksiView",
 ]

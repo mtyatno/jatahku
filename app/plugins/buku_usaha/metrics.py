@@ -304,6 +304,61 @@ async def penjualan_saya_bulan(ctx, th: int, bl: int) -> dict:
     return penjualan_saya(await ctx.ringkas_pemasukan_saya(mulai, akhir, per=("jenis", "income_meta.jenis")))
 
 
+# ── U5: angka aturan BU-* ────────────────────────────────────────────────
+JENDELA_KEBUTUHAN = 28          # hari yang dirata-rata untuk kebutuhan kas
+HARI_KEBUTUHAN = 14             # "kebutuhan dua minggu"
+AKHIR_AWAL_BULAN = 14           # sampai tanggal ini, prive dinilai untuk bulan lalu yang sudah utuh
+SEN = Decimal("0.01")
+NAMA_AMPLOP_PAJAK = "pajak"
+
+
+def jendela_kebutuhan(hari: date) -> tuple[date, date]:
+    """28 hari terakhir yang sudah lewat (sampai kemarin): hari ini belum selesai, jadi tidak ikut dirata-rata."""
+    return hari - timedelta(days=JENDELA_KEBUTUHAN), hari - timedelta(days=1)
+
+
+def kebutuhan(beban: Decimal) -> dict:
+    """Kebutuhan kas dua minggu (keputusan U5) = rata-rata pengeluaran harian amplop bersama selama 28 hari terakhir
+    × 14. Prive tidak ikut (bukan kebutuhan usaha). `harian` dua desimal, `jumlah` dibulatkan ke rupiah."""
+    beban = Decimal(beban)
+    return {"harian": (beban / JENDELA_KEBUTUHAN).quantize(SEN, rounding=ROUND_HALF_UP),
+            "jumlah": (beban * HARI_KEBUTUHAN / JENDELA_KEBUTUHAN).quantize(Decimal(1), rounding=ROUND_HALF_UP)}
+
+
+def cukup_hari(kas_sekarang: Decimal, harian: Decimal) -> int | None:
+    """Kas cukup untuk berapa hari pengeluaran rata-rata (dibulatkan ke bawah). None bila tidak ada pengeluaran."""
+    if harian <= 0:
+        return None
+    if kas_sekarang <= 0:
+        return 0
+    return int(Decimal(kas_sekarang) // Decimal(harian))
+
+
+def bulan_prive(hari: date) -> tuple[int, int]:
+    """Bulan yang dinilai BU-02. Sampai tanggal 14 laba bulan berjalan masih terlalu kecil untuk dibandingkan
+    dengan prive yang biasanya ditarik di awal bulan, jadi yang dinilai bulan lalu yang sudah utuh."""
+    if hari.day <= AKHIR_AWAL_BULAN:
+        return bulan_lalu(hari.year, hari.month)
+    return hari.year, hari.month
+
+
+def prive(lr: dict) -> Decimal:
+    """Prive bulan itu dari jawaban `laba_rugi`."""
+    return next((x["jumlah"] for x in lr["di_luar_laba_rugi"] if x["jenis"] == KIND_PRIVE), NOL)
+
+
+def amplop_pajak(amplop):
+    """Amplop bersama bernama "Pajak" (amplop bawaan wizard pasang); None bila tidak ada atau sudah diganti nama."""
+    return next((a for a in amplop if not a.pribadi and " ".join(a.nama.split()).lower() == NAMA_AMPLOP_PAJAK), None)
+
+
+async def beban_jendela(ctx, hari: date) -> dict:
+    """Pengeluaran amplop bersama selama jendela kebutuhan: {"jumlah", "banyak"}."""
+    mulai, akhir = jendela_kebutuhan(hari)
+    baris = await ctx.ringkas_transaksi(mulai, akhir, per=("bulan",), hanya_bersama=True)
+    return {"jumlah": sum((r.jumlah for r in baris), NOL), "banyak": sum(r.banyak for r in baris)}
+
+
 def hari_ini(ctx) -> date:
     """Tanggal hari ini di zona waktu user pemicu (bawaan Asia/Jakarta)."""
     from datetime import datetime

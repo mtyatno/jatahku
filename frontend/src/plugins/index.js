@@ -12,7 +12,9 @@
 //   export default {
 //     halaman: lazy(() => import('./Halaman.jsx')),          // semua rute /p/<id>/*; props { subpath, plugin }
 //     kartu,                                                 // kartu kustom; props { entri, item, ctx, kartu }
-//     aksi: { '<id>.penjualan': lazy(() => import('./FormPenjualan.jsx')) },   // props { onDone, onCancel }
+//     aksi: { '<id>.penjualan': lazy(() => import('./FormPenjualan.jsx')) },   // props { onDone, onCancel, isiAwal }
+//     catatCepat: { aksi: '<id>.penjualan', jenis: ['penjualan'] },  // U5, opsional: jenis catatan terdeteksi di
+//                                                                    //   Catat cepat yang dicatat lewat form aksi itu
 //     wizard: lazy(() => import('./Wizard.jsx')),             // U1, opsional: status `terpasang` (manifest `setup`);
 //   };                                                        //   props { ruangNama, sibuk, onSelesai, onLewati }
 //

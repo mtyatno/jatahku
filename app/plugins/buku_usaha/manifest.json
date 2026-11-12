@@ -1,13 +1,13 @@
 {
   "id": "buku_usaha",
   "name": "Buku Usaha",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "Jatahku",
   "description": "Pembukuan ringan untuk ruang usaha: kontak pelanggan dan pemasok, jenis pemasukan, alokasi omzet, laba rugi, dan kartu usaha di Beranda.",
   "icon": "book",
   "category": "usaha",
   "engines": {
-    "plugin_api": ">=1.5 <2.0"
+    "plugin_api": ">=1.6 <2.0"
   },
   "space_types": [
     "usaha"
@@ -189,7 +189,87 @@
         "method": "GET",
         "path": "/laporan"
       }
-    ]
+    ],
+    "advisor_rules": [
+      "BU-01",
+      "BU-02",
+      "BU-03"
+    ],
+    "nlp_kamus": {
+      "Bahan": [
+        "bahan baku",
+        "beras",
+        "ayam",
+        "daging",
+        "telur",
+        "tepung",
+        "gula",
+        "minyak goreng",
+        "sayur",
+        "bumbu",
+        "cabai",
+        "bawang",
+        "santan",
+        "mentega",
+        "barang dagangan",
+        "kulakan",
+        "stok barang"
+      ],
+      "Operasional": [
+        "kardus",
+        "kemasan",
+        "plastik",
+        "elpiji",
+        "gas lpg",
+        "tabung gas",
+        "listrik",
+        "sewa",
+        "gaji",
+        "upah",
+        "ongkir",
+        "ongkos kirim",
+        "kurir",
+        "bensin",
+        "parkir",
+        "internet",
+        "wifi",
+        "promosi",
+        "iklan",
+        "servis",
+        "alat tulis",
+        "es batu",
+        "air galon",
+        "kebersihan"
+      ]
+    },
+    "nlp_jenis": {
+      "modal": [
+        "setor modal",
+        "tambah modal",
+        "modal pemilik",
+        "modal awal",
+        "suntik modal"
+      ],
+      "pinjaman": [
+        "terima pinjaman",
+        "dapat pinjaman",
+        "pinjaman cair",
+        "pinjam dari",
+        "kur cair"
+      ],
+      "penjualan": [
+        "jual",
+        "terjual",
+        "menjual",
+        "laku",
+        "penjualan",
+        "terima pembayaran",
+        "pembayaran dari",
+        "terima dp",
+        "dp dari"
+      ]
+    },
+    "nlp_kontak": true
   },
   "entitlement": {
     "sku": "bundle.usaha",

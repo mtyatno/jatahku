@@ -221,3 +221,15 @@ test('rupiah: rugi bertanda minus di depan', () => {
   assert.equal(rupiahU3('-0.4'), 'Rp0');
   assert.equal(rupiahU3('abc'), 'Rp0');
 });
+
+// ── Plugin U5: isian awal form Penjualan dari Catat cepat ──
+test('isiAwalPenjualan: hanya jenis yang dikenal, digit jumlah, dan keterangan pendek yang dipakai', async () => {
+  const { isiAwalPenjualan } = await import('./bukuUsaha.js');
+  assert.deepEqual(isiAwalPenjualan({ jenis: 'modal', jumlah: '5000000', keterangan: 'setor modal', kontak_id: 'k2' }),
+    { jenis: 'modal', jumlah: '5000000', keterangan: 'setor modal', kontak_id: 'k2' });
+  assert.deepEqual(isiAwalPenjualan({ jenis: 'prive', jumlah: 'Rp900.000', keterangan: 7 }),
+    { jenis: 'penjualan', jumlah: '900000', keterangan: '', kontak_id: '' });
+  assert.deepEqual(isiAwalPenjualan({ keterangan: 'x'.repeat(300) }).keterangan.length, 200);
+  assert.deepEqual(isiAwalPenjualan(null), {});
+  assert.deepEqual(isiAwalPenjualan('teks'), {});
+});

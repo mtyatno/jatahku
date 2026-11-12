@@ -32,7 +32,7 @@ import pathlib
 import sys
 
 from app.plugins.host.manifest import Manifest
-from app.plugins.sdk.plugin import JENIS, Plugin
+from app.plugins.sdk.plugin import JENIS, KUNCI_KONTAK_CATATAN, Plugin
 
 TERLARANG = ("app.models", "app.api", "app.services", "app.bot", "app.core", "app.main", "app.plugins.host",
              "app.schemas", "app.scripts", "app.tests")
@@ -68,6 +68,8 @@ IZIN_PER_JENIS: dict[str, frozenset[str]] = {
     # hanya non-GET oleh owner/admin, `host/inti.py`).
     "rute": IZIN_BACA | {"incomes:write"},
     "simpan_field": IZIN_BACA,          # U2: hanya tabel plugin sendiri (`ctx.data()`), di commit catatan inti
+    # U5: kontak di teks Catat cepat. Tanpa izin inti sama sekali: hanya tabel plugin sendiri (`ctx.data()`), baca saja.
+    "kontak_catatan": frozenset(),
 }
 
 
@@ -227,6 +229,7 @@ def _kontribusi(m: Manifest) -> dict[str, set[str]]:
         "field_form": {f"{f.target}.{f.key}" for f in c.form_fields},
         "rute": {r.key for r in c.routes},
         "simpan_field": {f.target for f in c.form_fields},
+        "kontak_catatan": {KUNCI_KONTAK_CATATAN} if c.nlp_kontak else set(),
     }
 
 # Kontribusi yang fungsinya opsional: plugin boleh punya field tanpa penyimpanan sendiri (mis. validasi saja).

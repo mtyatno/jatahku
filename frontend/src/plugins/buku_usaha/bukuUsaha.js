@@ -228,6 +228,17 @@ export function validasiPenjualan(form, hariIni) {
   return { ok: Object.keys(galat).length === 0, galat, body };
 }
 
+/** Isian awal form Penjualan dari Catat cepat (U5): hanya kolom yang dikenal, dirapikan; selain objek = kosong. */
+export function isiAwalPenjualan(isi) {
+  if (!isi || typeof isi !== 'object') return {};
+  return {
+    jenis: JENIS_ID.has(isi.jenis) ? isi.jenis : 'penjualan',
+    jumlah: digitSaja(isi.jumlah),
+    keterangan: typeof isi.keterangan === 'string' ? rapiNama(isi.keterangan).slice(0, 200) : '',
+    kontak_id: typeof isi.kontak_id === 'string' ? isi.kontak_id : '',
+  };
+}
+
 /** Amplop bawaan untuk jenis selain penjualan: Laba ditahan bila ada, selain itu kosong (user memilih). */
 export function amplopBawaanNonPenjualan(amplop) {
   const a = arr(amplop).find(x => rapiNama(x?.nama).toLowerCase() === AMPLOP_BAWAAN_NON_PENJUALAN.toLowerCase());

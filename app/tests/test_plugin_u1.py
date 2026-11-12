@@ -199,11 +199,12 @@ class RuteManifestTests(unittest.TestCase):
         self.assertEqual(m.data_lifecycle.export, ["csv", "json"])
         self.assertIsNotNone(reg.kode_plugin("buku_usaha"))
         self.assertEqual(kode_mod.periksa_impor(FOLDER_BU, m), [])
-        # Belum ada cek, saran, bot, job, kamus: titik ekstensi lain tidak bekerja karena plugin ini (U5–U6).
-        # U2 menambah field form pengeluaran beserta penyimpanannya; U4 menambah kartu Beranda.
-        for jenis in ("cek", "aturan_advisor", "perintah_bot", "job"):
+        # Belum ada cek, bot, job: titik ekstensi itu tidak bekerja karena plugin ini (U6).
+        # U2 menambah field form pengeluaran beserta penyimpanannya; U4 kartu Beranda; U5 saran AI Advisor dan
+        # kontak di Catat cepat.
+        for jenis in ("cek", "perintah_bot", "job"):
             self.assertFalse(reg.punya(jenis), jenis)
-        for jenis in ("rute", "field_form", "simpan_field", "kartu"):
+        for jenis in ("rute", "field_form", "simpan_field", "kartu", "aturan_advisor", "kontak_catatan"):
             self.assertTrue(reg.punya(jenis), jenis)
 
     def test_cocok_pola(self):

@@ -141,6 +141,14 @@ class RencanaPengeluaran:
 
 
 @dataclass(frozen=True)
+class KontakCatatan:
+    """Keluaran `@plugin.kontak_catatan` (U5): kontak plugin yang disebut di teks Catat cepat."""
+    id: str
+    nama: str
+    peran: str
+
+
+@dataclass(frozen=True)
 class AksiRoute:
     """Tombol yang hanya membuka halaman plugin (`/p/<id>…`)."""
     label: str

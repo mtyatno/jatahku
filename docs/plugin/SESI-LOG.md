@@ -4,6 +4,51 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## U5 · Catat cepat versi usaha dan AI Advisor · 2026-11-12 · pemilik produk + Claude
+
+**Selesai** (branch `plugin/u5-catat-cepat-advisor`, **ditumpuk di atas `plugin/u4-kartu-beranda`** karena #208 belum di-merge; PR #210, label `review-keamanan`; tanpa migrasi; Plugin API 1.6; manifest Buku Usaha 0.5.0; tanpa izin baru, jadi instalasi lama tidak perlu menyetujui apa pun)
+- Keputusan pembuka (pemilik, 12 Nov): **A** BU-01 dikerjakan di sini, di atas angka Kas usaha U4; **B** karyawan hanya mendapat deteksi jenis catatan, kontak hanya untuk pemilik dan admin (kontak untuk karyawan = sesi sendiri bertanda review); **C** PR ini direview sesi keamanan terpisah sebelum merge.
+- **Saran AI Advisor:** `aturan.py` (fungsi murni angka → `Saran`), angka di `metrics.py`, kalimat di `teks.py`, tiga `@plugin.aturan_advisor`. BU-01 kas di bawah kebutuhan dua minggu; BU-02 prive melebihi laba; BU-03 amplop Pajak kosong padahal sudah ada omzet. Batas satu saran per plugin sudah ada sejak H2 (`daftar_per_plugin`); U5 mengujinya dengan aturan sungguhan.
+- **Host/SDK (Plugin API 1.6):** `contributes.nlp_jenis` (kata utuh → `penjualan` | `modal` | `pinjaman`, cukup data), `contributes.nlp_kontak` + `@plugin.kontak_catatan()` → `KontakCatatan | None`; `titik.deteksi_catatan` (jenis untuk semua peran yang boleh, kontak hanya pemilik/admin, keluaran diperiksa `rapikan_kontak`, tidak pernah melempar); `IZIN_PER_JENIS["kontak_catatan"]` kosong (hanya `ctx.data()`). `POST /transactions/suggest-envelope`: request `jenis` (opsional), jawaban `jenis_catatan` dan `kontak` (selalu ada, aditif).
+- **Buku Usaha:** kamus amplop bawaan Bahan/Operasional (`nlp_kamus`), kamus jenis (`nlp_jenis`), `kamus.py` (pencocokan nama kontak, fungsi murni) + `@plugin.kontak_catatan` (500 kontak terbaru per peran dari ruang konteks).
+- **Web:** `lib/catatCepat.js` (`jenisBerikut`, `jenisTerdeteksi`, `jenisLain`, `kontakCatatan`, `tambahanKontak`, `isiFormPlugin`), `CatatCepat.jsx` (baris Pemasok/Pelanggan dengan "bukan … ini", jenis mengikuti deteksi, ajakan lanjut ke form Fitur Tambahan), `pluginHost.aksiUntukJenis`, `Layout.jsx` (`isiAwal` ke form aksi plugin), modul web Buku Usaha `catatCepat` + `isiAwalPenjualan` di `FormPenjualan`.
+- Tes: unittest penuh 3833 lulus (+58 di `test_plugin_u5.py`; dua tes lama disesuaikan: `test_plugin_u1` karena Buku Usaha kini punya aturan advisor dan kontak catatan, `test_plugin_u4` karena Plugin API kini 1.6); node --test 804 lulus; build ok; validator OK; `openapi_cek` terhadap tip U4 tanpa perubahan memutus; Migrasi tidak berlaku.
+- **Uji mutasi 13 pemeriksaan, semuanya ditangkap** sesudah tes diperkuat: karyawan mendapat kontak; karyawan mendapat jenis modal/pinjaman (lapis host); route tanpa saringan batasan karyawan; peran kontak tidak diperiksa host; jenis cocok potongan kata; lebih dari satu saran per plugin; `kontak_catatan` boleh izin baca inti; BU-02 menyala saat prive = laba; BU-01 menyala saat kas = kebutuhan; aturan advisor dijalankan untuk karyawan; kamus jenis dari semua plugin terdaftar (bukan yang aktif di ruang); amplop Pajak pribadi ikut; kontak ditebak walau dua nama sama kuat. Putaran pertama meloloskan empat: tiga ditutup dengan tes baru, satu tes diperbaiki (lihat Jebakan).
+- **Diperiksa di browser** (Playwright + Chrome, PostgreSQL 16 + Redis + API + Vite lokal, data contoh Dapur Nusa): pemilik 1440 px gelap dan terang, karyawan 390 px terang. "ayam 40kg 1,64jt ud sumber unggas" → amplop Bahan (Kamus Fitur Tambahan) + Pemasok UD Sumber Unggas; simpan → body membawa `tambahan.buku_usaha.pemasok` dan baris `p_buku_usaha_txn_meta` berisi kontak itu. "jual nasi box arunika 30 pax 900rb" → jenis Penjualan + Pelanggan PT Arunika Data + ajakan form Penjualan. "setor modal 5jt" → ajakan form, form Penjualan terbuka di Modal pemilik dengan jumlah dan keterangan terisi. Karyawan: jenis Penjualan terdeteksi, tanpa baris pelanggan dan tanpa ajakan form, tanpa gulir samping. BU-01 "Kas usaha habis" tampil di kartu AI Advisor. Konsol bersih selain galat service worker dev dan satu sumber luar yang diblokir jaringan lingkungan uji.
+
+**Keputusan kecil**
+- **Kebutuhan dua minggu** = pengeluaran amplop bersama 28 hari terakhir yang sudah lewat (sampai kemarin) ÷ 28 × 14; prive tidak ikut (bukan kebutuhan usaha). Kajian hanya menyebut "kebutuhan dua minggu" dan U4 memutuskan arus kas tanpa proyeksi, jadi rata-rata aktual yang dipakai. Data A3 (kas Rp13,755 jt, kebutuhan Rp16,39 jt, "±11 hari") cocok dengan rumus beban sebulan ÷ hari × 14. **Perlu konfirmasi pemilik** bila definisi lain yang dimaksud.
+- BU-02 menilai bulan lalu sampai tanggal 14, sesudah itu bulan berjalan: di awal bulan laba masih kecil sedangkan prive biasanya ditarik di awal bulan, sehingga saran akan selalu menyala.
+- BU-03 mengenali amplop dari namanya ("Pajak", amplop bawaan wizard); diganti nama atau dihapus = saran diam.
+- Kontak: nama lengkap, nama tanpa awalan badan usaha/sapaan, atau kata pertama nama (≥ 4 huruf); selalu kata utuh; dua kontak sama kuat tidak ditebak. Tidak ada pencocokan mirip (salah ketik tidak cocok).
+- Penjualan atas nama pelanggan, modal, dan pinjaman **tidak disimpan dari Catat cepat**, tetapi dilanjutkan di form Penjualan: hanya form itu yang membagi menurut alokasi omzet dan menyimpan jenis pemasukan (`ctx.catat_pemasukan`). Penjualan dari Catat cepat tetap pemasukan inti tanpa jenis (masuk omzet sebagai `omzet_tanpa_jenis`, aturan U3), termasuk milik karyawan.
+- Satuan ("40 kg", "50 pax") tetap bagian keterangan; tidak ada field atau kamus tersendiri.
+- `kontak.plugin` di jawaban saran = pemilik kontak, supaya web tahu field `reference` mana yang diisi.
+
+**Digantung**
+- **Review keamanan terpisah belum dijalankan** (keputusan C): sesi ini menambah jalur baca data pelanggan/pemasok lewat saran dan titik ekstensi baru di host.
+- Kontak di Catat cepat karyawan (artboard "Karyawan: Catat cepat" menampilkannya): sesi sendiri bertanda review (keputusan B).
+- BU-03 bernada `info`: aturan pilih inti baru mengambil saran info bila saran merah/kuning kurang dari tiga, jadi di ruang yang sedang banyak peringatan BU-03 tidak tampil dan tidak masuk "lainnya".
+- Saran plugin hanya di kartu AI Advisor Beranda (H2); tidak di chat dan tidak di notifikasi proaktif. `/laba` dan pengingat kas: U6.
+- Pemilik/admin bisa memakai saran untuk memeriksa apakah sebuah nama ada di Kontak; itu data yang memang boleh mereka baca. Batas 60 saran/menit (R7) tetap berlaku.
+
+**Jebakan**
+- Tes "paling banyak satu saran Buku Usaha" semula lulus karena alasan lain: tiga slot kartu sudah terisi saran inti, jadi BU-02 tersisih oleh `daftar_maks`, bukan oleh batas per plugin (mutasi `daftar_per_plugin = 5` lolos). Kini `daftar_maks` dilonggarkan lewat `advisor_konstanta` di tes itu.
+- Gerbang karyawan di `titik.saran_advisor` (kode H2) ternyata tidak dikunci tes mana pun: tanpa gerbang itu hasilnya tetap kosong karena `ctx` menolak baca keuangan (lapis kedua). Kini dikunci `test_aturan_tidak_dijalankan_untuk_karyawan`.
+- Ditemukan saat cek browser, diperbaiki dengan tes lebih dulu: jenis yang dipindahkan deteksi ke Penjualan tertinggal bila teks diganti tanpa dikosongkan ("jual nasi box" → "setor modal" tetap "Penjualan · dari kata di catatanmu"). `catatCepat.jenisBerikut` kini mengikuti deteksi ke dua arah selama user belum memilih sendiri.
+- `nlp_kamus` (H2) mencocokkan **potongan** kata ("sewa" cocok di "penyewa"); `nlp_jenis` (U5) kata utuh. Kata kamus amplop dipilih supaya jarang menjadi bagian kata lain; menyamakan keduanya menyentuh perilaku H2 dan tidak dikerjakan di sini.
+- Suite penuh ±11 menit di mesin dua inti (mode debug asyncio); jangan dijalankan bersamaan dengan stack lokal.
+- `APP_ENV=development` menyalakan gema SQL: jalankan API lokal untuk cek browser tanpa itu, atau keluarannya puluhan ribu baris.
+- Data contoh dengan amplop minus membuat simpan pengeluaran 403 "Dana tidak cukup" (aturan inti), bukan galat field plugin.
+
+**Cara melanjutkan**
+- Urutan merge: **#208 (U4) dulu**. Sesudah itu `git fetch origin main && git rebase --onto origin/main 82671a1 plugin/u5-catat-cepat-advisor` (82671a1 = tip U4 yang ditumpuki), push ulang, arahkan PR ke `main`. Bentrok yang mungkin: `PROGRESS.md`, `SESI-LOG.md`, `00-indeks.md`.
+- Sesi review baru: "review PR #210 terhadap 03-workflow.md bagian keamanan". Fokus: `titik.deteksi_catatan` (gerbang karyawan, plugin aktif di ruang), `rapikan_kontak`, `buku_usaha.kontak_catatan` + `kamus.py`, `suggest_envelope`, `IZIN_PER_JENIS["kontak_catatan"]`.
+- Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`. Lalu di ruang usaha: Catat → "ayam 2kg 80rb <nama pemasok>" (baris Pemasok, tersimpan di transaksi), "jual … <nama pelanggan>" (ajakan form Penjualan), "setor modal 5jt"; akun karyawan: tanpa baris kontak; kartu AI Advisor menampilkan paling banyak satu saran Buku Usaha.
+- Berikutnya `/sesi-plugin U6` (butuh U3, R5), lalu V1.
+
+---
+
 ## U4 · Kartu Beranda dan arus kas · 2026-11-12 · pemilik produk + Claude
 
 **Selesai** (branch `plugin/u4-kartu-beranda`, di atas `main` sesudah #207; PR #208, label `review-keamanan`; tanpa migrasi; Plugin API 1.5; manifest Buku Usaha 0.4.0; tanpa izin baru, jadi instalasi lama tidak perlu menyetujui apa pun)
